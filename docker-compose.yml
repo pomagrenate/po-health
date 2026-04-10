@@ -1,0 +1,11 @@
+services:
+  po-health:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./pomaidb_drugs:/app/data/pomaidb_drugs
+    environment:
+      - DB_PATH=/app/data/pomaidb_drugs
+      - LOG_LEVEL=INFO
+    restart: unless-stopped

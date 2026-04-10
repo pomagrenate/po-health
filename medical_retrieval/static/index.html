@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Drug Retrieval System</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+
+<body>
+
+  <!-- ── Header ─────────────────────────────────────────────────────────── -->
+  <header>
+    <h1 id="main-title">Drug Retrieval System</h1>
+    <div class="header-controls">
+      <select id="lang-select" class="lang-select">
+        <option value="en">EN</option>
+        <option value="vi">VN</option>
+      </select>
+      <form id="search-form" class="search-box">
+        <input type="text" id="query-input" placeholder="Enter clinical question or drug name..."
+          aria-label="Search clinical database">
+        <button id="search-btn" type="submit">Search</button>
+      </form>
+    </div>
+  </header>
+
+  <nav class="main-nav">
+    <button class="nav-btn active" data-tab="search">Search</button>
+    <button class="nav-btn" data-tab="ddi">DDI Checker</button>
+    <button class="nav-btn" data-tab="bookmarks">Bookmarks</button>
+    <button class="nav-btn" data-tab="dashboard">Dashboard</button>
+  </nav>
+
+  <!-- ── Layout ─────────────────────────────────────────────────────────── -->
+  <div class="layout">
+
+    <!-- Sidebar filters -->
+    <aside aria-label="Filters">
+      <div class="search-mode-toggle">
+        <label class="switch">
+          <input type="checkbox" id="patient-friendly-toggle">
+          <span class="slider round"></span>
+        </label>
+        <span class="toggle-label">Patient-Friendly Mode</span>
+      </div>
+
+      <h2>Filters</h2>
+
+      <div class="filter-group" id="dose-form-group">
+        <!-- Populated by app.js via /api/filters -->
+      </div>
+
+      <div class="filter-group" id="status-group">
+        <!-- Populated by app.js via /api/filters -->
+      </div>
+
+      <div class="filter-group" id="route-group">
+        <!-- Populated by app.js via /api/filters -->
+      </div>
+
+      <div class="filter-group">
+        <h3>Active Ingredient</h3>
+        <input type="text" id="ingredient-input" placeholder="e.g. Ibuprofen" class="sidebar-input" autocomplete="off">
+      </div>
+
+      <div class="sidebar-section research-history">
+        <h3 id="txt-recent-research">Recent Research</h3>
+        <div id="history-list" class="history-list">
+          <!-- Populated by app.js -->
+        </div>
+      </div>
+
+      <button class="clear-filters" id="clear-filters">Clear all filters</button>
+    </aside>
+
+    <!-- Results -->
+    <main>
+      <div id="tab-search" class="tab-content active">
+        <div id="status-line">
+          <div id="status-bar" aria-live="polite"></div>
+          <button id="export-btn" class="secondary-btn" title="Download results as JSON">Export to JSON</button>
+        </div>
+        <div id="results-grid" role="list">
+          <p class="state-msg">
+            Enter a clinical question or drug name above to begin searching.
+          </p>
+        </div>
+      </div>
+
+      <div id="tab-ddi" class="tab-content">
+        <div class="ddi-container">
+          <h2>Drug-Drug Interaction Checker</h2>
+          <p>Select two or more drugs to check for potential interactions.</p>
+          <div class="ddi-slots">
+            <div class="ddi-slot" data-slot="0">Click to add drug...</div>
+            <div class="ddi-slot" data-slot="1">Click to add drug...</div>
+          </div>
+          <button id="check-btn" class="primary-btn" disabled>Check Interactions</button>
+          <div id="ddi-results"></div>
+        </div>
+      </div>
+
+      <div id="tab-bookmarks" class="tab-content">
+        <h2>Your Bookmarks</h2>
+        <div id="bookmarks-grid" class="results-grid"></div>
+      </div>
+
+      <div id="tab-dashboard" class="tab-content">
+        <h2>Clinical Dashboard</h2>
+        <div class="dashboard-grid">
+          <div class="dashboard-card">
+            <h3>Search Trends (Last Hour)</h3>
+            <div id="analytics-chart" class="analytics-chart">
+              <!-- Animated bars or simple visualization -->
+            </div>
+          </div>
+          <div class="dashboard-card">
+            <h3>Top Analyzed Drugs</h3>
+            <ul id="top-drugs-list" class="top-drugs-list"></ul>
+          </div>
+        </div>
+      </div>
+    </main>
+
+  </div>
+
+  <!-- ── Detail modal ────────────────────────────────────────────────────── -->
+  <div id="modal-overlay" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+    <div class="modal">
+      <div class="modal-header">
+        <h2 id="modal-title">Drug Detail</h2>
+        <button id="modal-close" class="modal-close" aria-label="Close">&times;</button>
+      </div>
+      <div id="modal-body" class="modal-body">
+        <div id="ai-analysis-box" class="ai-box"></div>
+        <div id="modal-details"></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+
+</html>
