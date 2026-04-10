@@ -22,6 +22,7 @@ import time
 import os
 import json
 import logging
+import hashlib
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -46,8 +47,23 @@ log = logging.getLogger(__name__)
 
 DB_PATH    = os.environ.get("DB_PATH", "./pomaidb_drugs")
 META_MEMBRANE = "drug_meta"
+GUIDELINES_MEMBRANE     = "clinical_guidelines"
+PATIENT_REGISTRY_MEMBRANE = "patient_registry"
+PATIENT_VITALS_MEMBRANE = "patient_vitals"
+DRUG_GRAPH_MEMBRANE     = "drug_disease_graph"
+CLINICAL_NOTES_MEMBRANE = "clinical_notes"
 STATIC_DIR = Path(__file__).parent / "static"
 _STATE: Dict = {}
+
+
+def _stable_int(text: str) -> int:
+    """Deterministically map a string to a uint32 (for series_id / vertex id)."""
+    return int(hashlib.sha256(text.encode()).hexdigest()[:8], 16) % (2**32 - 1)
+
+
+def _next_doc_id() -> int:
+    _STATE["doc_id_counter"] = _STATE.get("doc_id_counter", 0) + 1
+    return _STATE["doc_id_counter"]
 
 
 # ---------------------------------------------------------------------------
@@ -102,14 +118,24 @@ async def lifespan(app: FastAPI):
     
     # Initialize Advanced Industrial Membranes
     log.info("Initializing advanced membranes...")
+    
+    def _safe_init(name, kind):
+        try:
+            pomaidb.create_membrane_kind(_STATE["db"], name, 0, 1, kind)
+        except Exception as e:
+            if "already exists" not in str(e).lower():
+                log.warning(f"Membrane {name} init: {e}")
+
+    _safe_init("user_bookmarks", pomaidb.MEMBRANE_KIND_KEYVALUE)
+    _safe_init("search_stats",   pomaidb.MEMBRANE_KIND_TIMESERIES)
+    
     try:
-        # KV for persistence
-        pomaidb.create_membrane_kind(_STATE["db"], "user_bookmarks", 0, 1, pomaidb.MEMBRANE_KIND_KEYVALUE)
-        # TimeSeries for analytics
-        pomaidb.create_membrane_kind(_STATE["db"], "search_stats", 0, 1, pomaidb.MEMBRANE_KIND_TIMESERIES)
-        # RAG for granular search
         pomaidb.create_rag_membrane(_STATE["db"], "drug_rag", 384)
-        # AgentMemory for clinical research session
+    except Exception as e:
+        if "already exists" not in str(e).lower(): log.warning("drug_rag init: %s", e)
+
+    # AgentMemory for clinical research session
+    try:
         mem_path = os.path.join(DB_PATH, "research_memory")
         if not os.path.exists(mem_path): os.makedirs(mem_path)
         _STATE["agent_memory"] = pomaidb.agent_memory_open(
@@ -120,7 +146,18 @@ async def lifespan(app: FastAPI):
             max_device_bytes=10*1024*1024 # 10MB
         )
     except Exception as e:
-        log.warning("Advanced membrane init note: %s", e)
+        log.warning("AgentMemory init: %s", e)
+
+    # ── New clinical feature membranes ────────────────────────────────────
+    try:
+        pomaidb.create_rag_membrane(_STATE["db"], GUIDELINES_MEMBRANE, 384)
+    except Exception as e:
+        if "already exists" not in str(e).lower(): log.warning("Guidelines init: %s", e)
+
+    _safe_init(PATIENT_REGISTRY_MEMBRANE, pomaidb.MEMBRANE_KIND_KEYVALUE)
+    _safe_init(PATIENT_VITALS_MEMBRANE,   pomaidb.MEMBRANE_KIND_TIMESERIES)
+    _safe_init(DRUG_GRAPH_MEMBRANE,     pomaidb.MEMBRANE_KIND_KEYVALUE)
+    _safe_init(CLINICAL_NOTES_MEMBRANE, pomaidb.MEMBRANE_KIND_KEYVALUE)
 
     log.info("Pre-loading embedding model…")
     embed("warmup")          # singleton load before first request
@@ -418,11 +455,9 @@ def get_research_context():
         return []
     try:
         results = pomaidb.agent_memory_get_recent(_STATE["agent_memory"], "clinician_01", "session_current", 5)
-        # Results is a PomaiAgentMemoryResultSet which contains records
-        # The __init__.py helper should make this easy to iterate
         return [
-            {"query": r.text, "ts": r.logical_ts} 
-            for r in results.records[:results.count]
+            {"query": r["text"], "ts": r["logical_ts"]} 
+            for r in results
         ]
     except Exception as e:
         log.error("Context retrieval failed: %s", e)
@@ -461,3 +496,342 @@ def filters():
 @app.get("/")
 def index():
     return FileResponse(str(STATIC_DIR / "index.html"))
+
+
+# ---------------------------------------------------------------------------
+# New Clinical Feature Models
+# ---------------------------------------------------------------------------
+
+class GuidelineIngestRequest(BaseModel):
+    doc_id:  Optional[int] = None
+    title:   str
+    content: str
+    source:  Optional[str] = None
+
+
+class PatientRegisterRequest(BaseModel):
+    patient_id: str
+    name:       str
+    dob:        Optional[str] = None
+    notes:      Optional[str] = None
+
+
+class VitalsLogRequest(BaseModel):
+    vital_name: str
+    value:      float
+    timestamp:  Optional[int] = None
+
+
+class GraphEdgeRequest(BaseModel):
+    from_node: str
+    relation:  str
+    to_node:   str
+
+
+class NoteCreateRequest(BaseModel):
+    patient_id: str
+    subject:    Optional[str] = None
+    objective:  Optional[str] = None
+    assessment: Optional[str] = None
+    plan:       Optional[str] = None
+    free_text:  Optional[str] = None
+
+
+# ---------------------------------------------------------------------------
+# Feature 4 — Clinical Notes  (search route MUST come before /{patient_id})
+# ---------------------------------------------------------------------------
+
+@app.get("/api/notes/search")
+def search_notes(q: str, top_k: int = 10):
+    """Vector-search clinical notes via AgentMemory."""
+    if not _STATE.get("agent_memory"):
+        raise HTTPException(status_code=503, detail="AgentMemory not available")
+    try:
+        vec = embed(q).tolist()
+        results = pomaidb.agent_memory_search(
+            _STATE["agent_memory"], "notes", None, "soap_note",
+            0, 9999999999, vec, top_k
+        )
+        return [
+            {"text": r["text"], "patient_id": r["session_id"], "ts": r["logical_ts"]}
+            for r in results
+        ]
+    except Exception as e:
+        log.error("Note search failed: %s", e)
+        return []
+
+
+@app.post("/api/notes")
+def create_note(req: NoteCreateRequest):
+    ts = int(time.time())
+    note_id = f"{req.patient_id}:{ts}"
+    key = f"note:{note_id}"
+
+    full_text = "\n".join(filter(None, [
+        req.subject    and f"S: {req.subject}",
+        req.objective  and f"O: {req.objective}",
+        req.assessment and f"A: {req.assessment}",
+        req.plan       and f"P: {req.plan}",
+        req.free_text,
+    ]))
+
+    payload = json.dumps({
+        "note_id": note_id, "patient_id": req.patient_id, "ts": ts,
+        "subject": req.subject, "objective": req.objective,
+        "assessment": req.assessment, "plan": req.plan,
+        "free_text": req.free_text, "full_text": full_text,
+    })
+    pomaidb.kv_put(_STATE["db"], CLINICAL_NOTES_MEMBRANE, key, payload)
+
+    # Maintain per-patient index
+    idx_key = f"notes_idx:{req.patient_id}"
+    try:
+        raw = pomaidb.kv_get(_STATE["db"], CLINICAL_NOTES_MEMBRANE, idx_key)
+    except pomaidb.PomaiDBError:
+        raw = None
+    keys = json.loads(raw) if raw else []
+    keys.append(key)
+    pomaidb.kv_put(_STATE["db"], CLINICAL_NOTES_MEMBRANE, idx_key, json.dumps(keys))
+
+    # Store embedding in AgentMemory for semantic search
+    if full_text and _STATE.get("agent_memory"):
+        try:
+            vec = embed(full_text).tolist()
+            pomaidb.agent_memory_append(
+                _STATE["agent_memory"], "notes", req.patient_id, "soap_note",
+                ts, full_text, vec
+            )
+        except Exception as e:
+            log.warning("Note embedding failed: %s", e)
+
+    return {"status": "created", "note_id": note_id}
+
+
+@app.get("/api/notes/{patient_id}")
+def get_notes(patient_id: str):
+    idx_key = f"notes_idx:{patient_id}"
+    try:
+        raw = pomaidb.kv_get(_STATE["db"], CLINICAL_NOTES_MEMBRANE, idx_key)
+    except pomaidb.PomaiDBError:
+        raw = None
+    keys = json.loads(raw) if raw else []
+    notes = []
+    for k in reversed(keys[-50:]):
+        try:
+            n = pomaidb.kv_get(_STATE["db"], CLINICAL_NOTES_MEMBRANE, k)
+            notes.append(json.loads(n))
+        except pomaidb.PomaiDBError:
+            pass
+    return notes
+
+
+# ---------------------------------------------------------------------------
+# Feature 2 — Patient Registry & Vitals
+# ---------------------------------------------------------------------------
+
+@app.post("/api/patients/register")
+def register_patient(req: PatientRegisterRequest):
+    key = f"patient:{req.patient_id}"
+    payload = json.dumps({
+        "patient_id": req.patient_id, "name": req.name,
+        "dob": req.dob, "notes": req.notes,
+        "registered_at": int(time.time()),
+    })
+    pomaidb.kv_put(_STATE["db"], PATIENT_REGISTRY_MEMBRANE, key, payload)
+    try:
+        raw = pomaidb.kv_get(_STATE["db"], PATIENT_REGISTRY_MEMBRANE, "all_patient_ids")
+    except pomaidb.PomaiDBError:
+        raw = None
+    ids = json.loads(raw) if raw else []
+    if req.patient_id not in ids:
+        ids.append(req.patient_id)
+    pomaidb.kv_put(_STATE["db"], PATIENT_REGISTRY_MEMBRANE, "all_patient_ids", json.dumps(ids))
+    return {"status": "registered", "patient_id": req.patient_id}
+
+
+@app.get("/api/patients")
+def list_patients():
+    try:
+        raw = pomaidb.kv_get(_STATE["db"], PATIENT_REGISTRY_MEMBRANE, "all_patient_ids")
+    except pomaidb.PomaiDBError:
+        raw = None
+    ids = json.loads(raw) if raw else []
+    patients = []
+    for pid in ids:
+        try:
+            p = pomaidb.kv_get(_STATE["db"], PATIENT_REGISTRY_MEMBRANE, f"patient:{pid}")
+            patients.append(json.loads(p))
+        except pomaidb.PomaiDBError:
+            pass
+    return patients
+
+
+@app.post("/api/patients/{patient_id}/vitals")
+def log_vitals(patient_id: str, req: VitalsLogRequest):
+    ts = req.timestamp or int(time.time())
+    series_id = _stable_int(f"patient:{patient_id}:{req.vital_name}")
+    pomaidb.ts_put(_STATE["db"], PATIENT_VITALS_MEMBRANE, series_id, ts, req.value)
+
+    # Maintain a KV log for retrieval (ts_get not exposed in Python API)
+    log_key = f"vitals_log:{patient_id}:{req.vital_name}:{ts}"
+    entry = json.dumps({"value": req.value, "ts": ts, "vital": req.vital_name})
+    pomaidb.kv_put(_STATE["db"], PATIENT_REGISTRY_MEMBRANE, log_key, entry)
+
+    # Update per-patient vitals index
+    idx_key = f"vitals_idx:{patient_id}"
+    try:
+        raw_idx = pomaidb.kv_get(_STATE["db"], PATIENT_REGISTRY_MEMBRANE, idx_key)
+    except pomaidb.PomaiDBError:
+        raw_idx = None
+    keys = json.loads(raw_idx) if raw_idx else []
+    if log_key not in keys:
+        keys.append(log_key)
+    pomaidb.kv_put(_STATE["db"], PATIENT_REGISTRY_MEMBRANE, idx_key, json.dumps(keys))
+
+    return {"status": "logged", "series_id": series_id}
+
+
+@app.get("/api/patients/{patient_id}/vitals")
+def get_vitals(patient_id: str, vital: Optional[str] = None):
+    idx_key = f"vitals_idx:{patient_id}"
+    try:
+        raw_idx = pomaidb.kv_get(_STATE["db"], PATIENT_REGISTRY_MEMBRANE, idx_key)
+    except pomaidb.PomaiDBError:
+        raw_idx = None
+    keys = json.loads(raw_idx) if raw_idx else []
+    records = []
+    for k in keys:
+        try:
+            r = pomaidb.kv_get(_STATE["db"], PATIENT_REGISTRY_MEMBRANE, k)
+            entry = json.loads(r)
+            if vital and entry.get("vital") != vital:
+                continue
+            records.append(entry)
+        except pomaidb.PomaiDBError:
+            pass
+    records.sort(key=lambda x: x["ts"])
+    return records
+
+
+# ---------------------------------------------------------------------------
+# Feature 1 — Clinical Guidelines (RAG)
+# ---------------------------------------------------------------------------
+
+_CHUNK_SIZE = 512  # characters per chunk
+
+
+@app.post("/api/guidelines/ingest")
+def ingest_guideline(req: GuidelineIngestRequest):
+    doc_id = req.doc_id if req.doc_id is not None else _next_doc_id()
+    try:
+        # Store metadata for listing / title lookup
+        meta = json.dumps({"doc_id": doc_id, "title": req.title, "source": req.source})
+        pomaidb.kv_put(_STATE["db"], CLINICAL_NOTES_MEMBRANE, f"guideline_meta:{doc_id}", meta)
+
+        # Chunk text and insert with real embeddings
+        text = req.content
+        for i in range(0, max(1, len(text)), _CHUNK_SIZE):
+            chunk = text[i:i + _CHUNK_SIZE]
+            chunk_id = _stable_int(f"{doc_id}:{i}")
+            vec = embed(chunk).tolist()
+            # Phase 7: Correct RAG insertion with text and dummy token
+            pomaidb.put_chunk(
+                _STATE["db"], GUIDELINES_MEMBRANE,
+                chunk_id=chunk_id, doc_id=doc_id,
+                token_ids=[1], # Dummy token to satisfy C library requirement
+                vector=vec,
+                text=chunk
+            )
+
+        return {"status": "ingested", "doc_id": doc_id, "title": req.title}
+    except Exception as e:
+        log.error("Guideline ingest failed: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/guidelines/search")
+def search_guidelines(q: str, top_k: int = 5):
+    try:
+        vec = embed(q).tolist()
+        hits = pomaidb.search_rag(
+            _STATE["db"], GUIDELINES_MEMBRANE,
+            vector=vec, topk=top_k,
+        )
+        results = []
+        for item in hits:
+            # hits: list of (chunk_id, doc_id, score, token_matches, chunk_text)
+            chunk_id, doc_id, score = item[0], item[1], item[2]
+            chunk_text = item[4] if len(item) > 4 else ""
+            raw_meta = None
+            try:
+                raw_meta = pomaidb.kv_get(_STATE["db"], CLINICAL_NOTES_MEMBRANE, f"guideline_meta:{doc_id}")
+            except pomaidb.PomaiDBError:
+                pass
+            meta = json.loads(raw_meta) if raw_meta else {}
+            results.append({
+                "doc_id": doc_id, "chunk_id": chunk_id, "score": float(score),
+                "title": meta.get("title", f"Document {doc_id}"),
+                "source": meta.get("source"),
+                "excerpt": chunk_text or "",
+            })
+        return results
+    except Exception as e:
+        log.error("Guideline search failed: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ---------------------------------------------------------------------------
+# Feature 3 — Drug-Disease Knowledge Graph (KV adjacency list)
+# ---------------------------------------------------------------------------
+
+@app.get("/api/graph/drug/{drug_name}")
+def get_drug_graph(drug_name: str):
+    from_key = f"graph:{drug_name}:edges"
+    try:
+        raw = pomaidb.kv_get(_STATE["db"], DRUG_GRAPH_MEMBRANE, from_key)
+    except pomaidb.PomaiDBError:
+        raw = None
+    edges = json.loads(raw) if raw else []
+    return {"drug": drug_name, "edges": edges}
+
+
+@app.post("/api/graph/edge")
+def add_graph_edge(req: GraphEdgeRequest):
+    from_key = f"graph:{req.from_node}:edges"
+    try:
+        raw = pomaidb.kv_get(_STATE["db"], DRUG_GRAPH_MEMBRANE, from_key)
+    except pomaidb.PomaiDBError:
+        raw = None
+    edges = json.loads(raw) if raw else []
+    new_edge = {"relation": req.relation, "target": req.to_node}
+    if new_edge not in edges:
+        edges.append(new_edge)
+    pomaidb.kv_put(_STATE["db"], DRUG_GRAPH_MEMBRANE, from_key, json.dumps(edges))
+    return {"status": "edge_added", "from": req.from_node, "to": req.to_node}
+
+
+@app.post("/api/graph/seed")
+def seed_graph():
+    """Seed drug-disease graph from existing drug metadata."""
+    seeded = 0
+    for drug_id in range(1, 5001):
+        try:
+            raw = pomaidb.meta_get(_STATE["db"], META_MEMBRANE, str(drug_id))
+            if not raw:
+                continue
+            drug = json.loads(raw)
+            name = drug.get("name", "").strip()
+            if not name:
+                continue
+            edges = []
+            for ind in drug.get("indications", [])[:5]:
+                edges.append({"relation": "treats", "target": ind[:80]})
+            for contra in drug.get("contraindications", [])[:5]:
+                edges.append({"relation": "contraindicated_in", "target": contra[:80]})
+            if edges:
+                key = f"graph:{name}:edges"
+                pomaidb.kv_put(_STATE["db"], DRUG_GRAPH_MEMBRANE, key, json.dumps(edges))
+                seeded += 1
+        except Exception:
+            pass
+    return {"status": "seeded", "drugs_processed": seeded}

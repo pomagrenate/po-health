@@ -31,6 +31,10 @@
     <button class="nav-btn" data-tab="ddi">DDI Checker</button>
     <button class="nav-btn" data-tab="bookmarks">Bookmarks</button>
     <button class="nav-btn" data-tab="dashboard">Dashboard</button>
+    <button class="nav-btn" data-tab="guidelines">Guidelines</button>
+    <button class="nav-btn" data-tab="patients">Patients</button>
+    <button class="nav-btn" data-tab="graph">Knowledge Graph</button>
+    <button class="nav-btn" data-tab="notes">Notes</button>
   </nav>
 
   <!-- ── Layout ─────────────────────────────────────────────────────────── -->
@@ -122,6 +126,84 @@
           </div>
         </div>
       </div>
+
+      <!-- ── Guidelines Tab ─────────────────────────────────────────────── -->
+      <div id="tab-guidelines" class="tab-content">
+        <h2>Clinical Guidelines</h2>
+        <div class="guideline-ingest" style="margin-bottom:1rem">
+          <input type="text" id="guideline-title" placeholder="Guideline title..." class="sidebar-input" style="width:100%;margin-bottom:0.5rem">
+          <textarea id="guideline-content" placeholder="Paste guideline or protocol text here..." rows="5" style="width:100%;padding:0.5rem;border:1px solid var(--border);border-radius:6px;font-family:inherit;resize:vertical"></textarea>
+          <input type="text" id="guideline-source" placeholder="Source (optional, e.g. WHO 2024)" class="sidebar-input" style="width:100%;margin-top:0.5rem">
+          <button id="guideline-ingest-btn" class="primary-btn" style="margin-top:0.5rem">Ingest Guideline</button>
+        </div>
+        <div style="display:flex;gap:0.5rem;margin-bottom:1rem">
+          <input type="text" id="guideline-query" placeholder="Search guidelines..." class="sidebar-input" style="flex:1">
+          <button id="guideline-search-btn" class="secondary-btn">Search</button>
+        </div>
+        <div id="guidelines-results" class="results-grid"></div>
+      </div>
+
+      <!-- ── Patients Tab ───────────────────────────────────────────────── -->
+      <div id="tab-patients" class="tab-content">
+        <h2>Patient Vitals Tracker</h2>
+        <div style="display:flex;gap:0.5rem;margin-bottom:1rem;flex-wrap:wrap">
+          <input type="text" id="new-patient-id" placeholder="Patient ID (e.g. P001)" class="sidebar-input" style="width:140px">
+          <input type="text" id="new-patient-name" placeholder="Full Name" class="sidebar-input" style="flex:1">
+          <button id="register-patient-btn" class="primary-btn">Register</button>
+        </div>
+        <div style="display:flex;gap:0.5rem;margin-bottom:1rem;flex-wrap:wrap;align-items:center">
+          <select id="patient-select" class="sidebar-input" style="flex:1">
+            <option value="">-- Select Patient --</option>
+          </select>
+          <select id="vital-name-select" class="sidebar-input">
+            <option value="bp_systolic">BP Systolic (mmHg)</option>
+            <option value="bp_diastolic">BP Diastolic (mmHg)</option>
+            <option value="glucose">Blood Glucose (mg/dL)</option>
+            <option value="spo2">SpO2 (%)</option>
+            <option value="temperature">Temperature (°C)</option>
+            <option value="heart_rate">Heart Rate (bpm)</option>
+          </select>
+          <input type="number" id="vital-value" placeholder="Value" step="0.1" class="sidebar-input" style="width:100px">
+          <button id="log-vitals-btn" class="secondary-btn">Log Vital</button>
+        </div>
+        <div id="vitals-chart-container" style="margin-bottom:1rem">
+          <canvas id="vitals-chart" style="width:100%;max-height:200px"></canvas>
+        </div>
+        <div id="vitals-table"></div>
+      </div>
+
+      <!-- ── Knowledge Graph Tab ────────────────────────────────────────── -->
+      <div id="tab-graph" class="tab-content">
+        <h2>Drug-Disease Knowledge Graph</h2>
+        <div style="display:flex;gap:0.5rem;margin-bottom:1rem;flex-wrap:wrap">
+          <input type="text" id="graph-drug-input" placeholder="Drug name (e.g. Aspirin)..." class="sidebar-input" style="flex:1">
+          <button id="graph-lookup-btn" class="primary-btn">Look Up</button>
+          <button id="graph-seed-btn" class="secondary-btn">Seed from Drug DB</button>
+        </div>
+        <div id="graph-results"></div>
+      </div>
+
+      <!-- ── Notes Tab ──────────────────────────────────────────────────── -->
+      <div id="tab-notes" class="tab-content">
+        <h2>Clinical Notes (SOAP)</h2>
+        <div style="display:flex;gap:0.5rem;margin-bottom:1rem;flex-wrap:wrap;align-items:center">
+          <select id="notes-patient-select" class="sidebar-input" style="flex:1">
+            <option value="">-- Select Patient --</option>
+          </select>
+          <input type="text" id="notes-search-q" placeholder="Search notes..." class="sidebar-input" style="flex:1">
+          <button id="notes-search-btn" class="secondary-btn">Search</button>
+        </div>
+        <div class="dashboard-card" style="margin-bottom:1rem">
+          <h3>New Note</h3>
+          <input type="text" id="note-subject"    placeholder="S — Subjective: patient complaints..." class="sidebar-input" style="width:100%;margin-bottom:0.4rem">
+          <input type="text" id="note-objective"  placeholder="O — Objective: exam findings, vitals..." class="sidebar-input" style="width:100%;margin-bottom:0.4rem">
+          <input type="text" id="note-assessment" placeholder="A — Assessment: diagnosis..." class="sidebar-input" style="width:100%;margin-bottom:0.4rem">
+          <input type="text" id="note-plan"       placeholder="P — Plan: treatment, follow-up..." class="sidebar-input" style="width:100%;margin-bottom:0.4rem">
+          <button id="save-note-btn" class="primary-btn">Save Note</button>
+        </div>
+        <div id="notes-list" class="results-grid"></div>
+      </div>
+
     </main>
 
   </div>
@@ -140,7 +222,7 @@
     </div>
   </div>
 
-  <script src="/static/app.js"></script>
+  <script type="module" src="/static/app.js"></script>
 </body>
 
 </html>

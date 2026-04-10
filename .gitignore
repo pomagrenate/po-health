@@ -1,5 +1,6 @@
-# PomaiDB
-pomaidb/
+# PomaiDB (Ignore core but allow Python wrapper)
+pomaidb/*
+!pomaidb/python/
 pomaidb_drugs/
 __pycache__/
 *.pyc
