@@ -321,11 +321,14 @@ main {
 /* ── Tabs ── */
 .main-nav {
   display: flex;
+  flex-wrap: wrap;
   gap: 5px;
   background: white;
   padding: 10px 40px;
   border-bottom: 1px solid var(--gray-200);
 }
+
+
 
 .nav-btn {
   background: none;

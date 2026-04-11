@@ -34,7 +34,7 @@ from pydantic import BaseModel, Field
 
 from _db import pomaidb                                        # embedded DB
 from ingest import open_db
-from search_engine import find_drugs, get_drug_by_id, get_filter_values
+from search_engine import find_drugs, get_drug_by_id, get_filter_values, search_one
 from embedder import embed                                     # pre-load model at startup
 from logging_config import setup_logging
 
@@ -51,7 +51,16 @@ GUIDELINES_MEMBRANE     = "clinical_guidelines"
 PATIENT_REGISTRY_MEMBRANE = "patient_registry"
 PATIENT_VITALS_MEMBRANE = "patient_vitals"
 DRUG_GRAPH_MEMBRANE     = "drug_disease_graph"
-CLINICAL_NOTES_MEMBRANE = "clinical_notes"
+CLINICAL_NOTES_MEMBRANE     = "clinical_notes"
+# ── Phase 8: Breakthrough Clinical Discovery Membranes ────────────────
+ADVERSE_INTERACTION_MEMBRANE = "drug_interaction_graph"
+PROTEIN_STRUCTURE_MEMBRANE   = "protein_mesh"
+VITALS_TRACKER_STATS         = "vitals_tracker_stats"
+DDI_GRAPH_MEMBRANE           = "ddi_graph"
+PATIENT_MEDS_MEMBRANE        = "patient_medications"
+PATIENT_ALERTS_MEMBRANE      = "patient_alerts"
+DOCKING_DB_PATH              = os.environ.get("DOCKING_DB_PATH", "./pomaidb_docking")
+CLINICAL_AGENT_URL           = os.environ.get("CLINICAL_AGENT_URL", "")
 STATIC_DIR = Path(__file__).parent / "static"
 _STATE: Dict = {}
 
@@ -82,6 +91,7 @@ class SearchRequest(BaseModel):
     filters: SearchFilters = Field(default_factory=SearchFilters)
     top_k:   int           = Field(default=10, ge=1, le=50)
     patient_friendly: bool = Field(default=False)
+    patient_id: Optional[str] = None
 
 
 class DrugSummary(BaseModel):
@@ -121,54 +131,81 @@ async def lifespan(app: FastAPI):
     
     def _safe_init(name, kind):
         try:
-            pomaidb.create_membrane_kind(_STATE["db"], name, 0, 1, kind)
+            if hasattr(pomaidb, "create_membrane_kind"):
+                pomaidb.create_membrane_kind(_STATE["db"], name, 0, 1, kind)
+                log.info(f"Membrane {name} initialized.")
+            else:
+                log.error(f"pomaidb.create_membrane_kind not found. Failed to init {name}")
         except Exception as e:
             if "already exists" not in str(e).lower():
                 log.warning(f"Membrane {name} init: {e}")
+            else:
+                log.info(f"Membrane {name} already exists.")
 
     _safe_init("user_bookmarks", pomaidb.MEMBRANE_KIND_KEYVALUE)
     _safe_init("search_stats",   pomaidb.MEMBRANE_KIND_TIMESERIES)
     
     try:
-        pomaidb.create_rag_membrane(_STATE["db"], "drug_rag", 384)
+        if hasattr(pomaidb, "create_rag_membrane"):
+            pomaidb.create_rag_membrane(_STATE["db"], "drug_rag", 384)
+            log.info("drug_rag initialized.")
+        else:
+            log.error("pomaidb.create_rag_membrane not found.")
     except Exception as e:
         if "already exists" not in str(e).lower(): log.warning("drug_rag init: %s", e)
 
     # AgentMemory for clinical research session
     try:
-        mem_path = os.path.join(DB_PATH, "research_memory")
-        if not os.path.exists(mem_path): os.makedirs(mem_path)
-        _STATE["agent_memory"] = pomaidb.agent_memory_open(
-            path=mem_path,
-            dim=384,          # Match ChemBERTa
-            metric="ip",      # Inner Product
-            max_messages_per_agent=100,
-            max_device_bytes=10*1024*1024 # 10MB
-        )
+        if hasattr(pomaidb, "agent_memory_open"):
+            mem_path = os.path.join(DB_PATH, "research_memory")
+            if not os.path.exists(mem_path): os.makedirs(mem_path, exist_ok=True)
+            _STATE["agent_memory"] = pomaidb.agent_memory_open(
+                path=mem_path,
+                dim=384,          # Match ChemBERTa
+                metric="ip",      # Inner Product
+                max_messages_per_agent=100,
+                max_device_bytes=10*1024*1024 # 10MB
+            )
+            log.info("AgentMemory initialized.")
+        else:
+            log.error("pomaidb.agent_memory_open not found. Context retrieval will be disabled.")
     except Exception as e:
         log.warning("AgentMemory init: %s", e)
 
     # ── New clinical feature membranes ────────────────────────────────────
     try:
-        pomaidb.create_rag_membrane(_STATE["db"], GUIDELINES_MEMBRANE, 384)
+        if hasattr(pomaidb, "create_rag_membrane"):
+            pomaidb.create_rag_membrane(_STATE["db"], GUIDELINES_MEMBRANE, 384)
+            log.info(f"Membrane {GUIDELINES_MEMBRANE} initialized.")
+        else:
+            log.error(f"pomaidb.create_rag_membrane not found. Failed to init {GUIDELINES_MEMBRANE}")
     except Exception as e:
         if "already exists" not in str(e).lower(): log.warning("Guidelines init: %s", e)
 
     _safe_init(PATIENT_REGISTRY_MEMBRANE, pomaidb.MEMBRANE_KIND_KEYVALUE)
     _safe_init(PATIENT_VITALS_MEMBRANE,   pomaidb.MEMBRANE_KIND_TIMESERIES)
-    _safe_init(DRUG_GRAPH_MEMBRANE,     pomaidb.MEMBRANE_KIND_KEYVALUE)
-    _safe_init(CLINICAL_NOTES_MEMBRANE, pomaidb.MEMBRANE_KIND_KEYVALUE)
+    _safe_init(DRUG_GRAPH_MEMBRANE,       pomaidb.MEMBRANE_KIND_KEYVALUE)
+    _safe_init(CLINICAL_NOTES_MEMBRANE,   pomaidb.MEMBRANE_KIND_KEYVALUE)
+    # ── Phase 8: Breakthrough AI Evolution ───────────────────────────────
+    _safe_init(DDI_GRAPH_MEMBRANE,        pomaidb.MEMBRANE_KIND_KEYVALUE)
+    _safe_init(PATIENT_MEDS_MEMBRANE,     pomaidb.MEMBRANE_KIND_KEYVALUE)
+    _safe_init(PATIENT_ALERTS_MEMBRANE,   pomaidb.MEMBRANE_KIND_KEYVALUE)
 
     log.info("Pre-loading embedding model…")
     embed("warmup")          # singleton load before first request
     log.info("Server ready — industrial persistence active.")
     yield
     # ── Shutdown ──────────────────────────────────────────────────────────
-    if _STATE.get("agent_memory"):
+    if _STATE.get("agent_memory") and hasattr(pomaidb, "agent_memory_close"):
         pomaidb.agent_memory_close(_STATE["agent_memory"])
-    if "db" in _STATE:
+        log.info("AgentMemory closed.")
+    if _STATE.get("docking_db") and hasattr(pomaidb, "close"):
+        pomaidb.close(_STATE["docking_db"])
+        log.info("Docking database closed.")
+    if "db" in _STATE and hasattr(pomaidb, "close"):
         pomaidb.close(_STATE["db"])
         log.info("Embedded database closed.")
+
 
 
 app = FastAPI(
@@ -251,12 +288,21 @@ def health():
 def search(req: SearchRequest):
     """Hybrid semantic + structured-filter drug search."""
     active_filters = {k: v for k, v in req.filters.model_dump().items() if v}
+    # Phase 8: Pull patient medications for real-time DDI check
+    current_meds = []
+    if req.patient_id:
+        try:
+            raw = pomaidb.kv_get(_STATE["db"], PATIENT_MEDS_MEMBRANE, f"meds:{req.patient_id}")
+            if raw: current_meds = json.loads(raw)
+        except Exception: pass
+
     results = find_drugs(
         _STATE["db"], 
         req.query, 
         filters=active_filters, 
         top_k=req.top_k,
-        patient_friendly=req.patient_friendly
+        patient_friendly=req.patient_friendly,
+        current_meds=current_meds
     )
     # Telemetry: Log search to TimeSeries and AgentMemory
     try:
@@ -315,7 +361,7 @@ class DDICheckRequest(BaseModel):
 
 @app.post("/api/check-interactions")
 def check_interactions(req: DDICheckRequest):
-    """Simple heuristic-based DDI checker."""
+    """Graph-RAG DDI checker: PomaiDB DDI graph + RAG literature evidence."""
     if len(req.drug_ids) < 2:
         return {"interactions": [], "summary": "Select at least two drugs to check."}
 
@@ -325,58 +371,110 @@ def check_interactions(req: DDICheckRequest):
         if raw:
             drugs.append(json.loads(raw))
 
-    interactions = []
-    ingredients = set()
-    
-    # 1. Check for therapeutic duplication (same active ingredient)
+    interactions: List[Dict] = []
+    seen_pairs: set = set()
+
+    # 1. DDI Graph lookup (primary — O(n²) over drug pairs)
+    for i, d1 in enumerate(drugs):
+        for d2 in drugs[i + 1:]:
+            a = d1["name"].lower().strip()
+            b = d2["name"].lower().strip()
+            pair_key = tuple(sorted([a, b]))
+            if pair_key in seen_pairs:
+                continue
+            seen_pairs.add(pair_key)
+
+            edge_raw = None
+            for key in (f"ddi:{a}:{b}", f"ddi:{b}:{a}"):
+                try:
+                    edge_raw = pomaidb.kv_get(_STATE["db"], DDI_GRAPH_MEMBRANE, key)
+                    if edge_raw:
+                        break
+                except pomaidb.PomaiDBError:
+                    pass
+
+            if edge_raw:
+                edge = json.loads(edge_raw)
+                # RAG: pull literature evidence for the interaction mechanism
+                literature: List[str] = []
+                try:
+                    mechanism = edge.get("mechanism", f"{d1['name']} {d2['name']} interaction")
+                    rag_hits = pomaidb.search_rag(
+                        _STATE["db"], "drug_rag",
+                        vector=embed(mechanism).tolist(), topk=2,
+                    )
+                    for hit in rag_hits:
+                        text = hit[4] if len(hit) > 4 else ""
+                        if text:
+                            literature.append(text[:300])
+                except Exception as e:
+                    log.warning("DDI RAG evidence lookup failed: %s", e)
+
+                interactions.append({
+                    "type":            "Drug-Drug Interaction",
+                    "drug_a":          d1["name"],
+                    "drug_b":          d2["name"],
+                    "severity":        edge.get("severity", "moderate"),
+                    "mechanism":       edge.get("mechanism", ""),
+                    "sources":         edge.get("sources", []),
+                    "contraindicated": edge.get("contraindicated", False),
+                    "literature":      literature,
+                })
+
+    # 2. Therapeutic duplication fallback (same active ingredient)
+    ingredients: Dict[str, str] = {}
     for d in drugs:
         for ing in d.get("ingredients", []):
-            ing_lower = ing.lower()
-            if ing_lower in ingredients:
+            il = ing.lower()
+            if il in ingredients and ingredients[il] != d["name"]:
                 interactions.append({
-                    "type": "Therapeutic Duplication",
-                    "severity": "High",
-                    "description": f"Multiple drugs contain {ing}. This increases the risk of overdose."
+                    "type":            "Therapeutic Duplication",
+                    "drug_a":          ingredients[il],
+                    "drug_b":          d["name"],
+                    "severity":        "high",
+                    "mechanism":       f"Both drugs contain {ing} — increased risk of overdose.",
+                    "sources":         [],
+                    "contraindicated": False,
+                    "literature":      [],
                 })
-            ingredients.add(ing_lower)
+            ingredients[il] = d["name"]
 
-    # 2. Heuristic: Known risky combinations (Sample set)
-    names = [d["name"].lower() for d in drugs]
-    risky_pairs = [
-        ({"aspirin", "warfarin"}, "Increased risk of major bleeding."),
-        ({"aspirin", "ibuprofen"}, "Increased risk of gastrointestinal bleeding."),
-        ({"clonidine", "propranolol"}, "Risk of severe rebound hypertension if stopped."),
-    ]
-    
-    for pair, desc in risky_pairs:
-        matches = [n for n in names if any(p in n for p in pair)]
-        if len(set(matches)) >= 2:
-            interactions.append({
-                "type": "Drug-Drug Interaction",
-                "severity": "Serious",
-                "description": desc
-            })
-
-    # 3. Cross-reference warnings
+    # 3. FDA label cross-reference (only when graph has no data for this pair)
+    graph_pairs = {(i["drug_a"].lower(), i["drug_b"].lower()) for i in interactions
+                   if i["type"] == "Drug-Drug Interaction"}
     for d1 in drugs:
         w1 = d1.get("warnings", "").lower()
         for d2 in drugs:
-            if d1 == d2: continue
+            if d1 is d2:
+                continue
+            pair = tuple(sorted([d1["name"].lower(), d2["name"].lower()]))
+            if pair in graph_pairs:
+                continue
             if d2["name"].lower() in w1:
                 interactions.append({
-                    "type": "Cross-Reference Warning",
-                    "severity": "Moderate",
-                    "description": f"{d1['name']} warning mentions possible issues with {d2['name']}."
+                    "type":            "Cross-Reference Warning",
+                    "drug_a":          d1["name"],
+                    "drug_b":          d2["name"],
+                    "severity":        "moderate",
+                    "mechanism":       f"FDA label for {d1['name']} warns about use with {d2['name']}.",
+                    "sources":         ["fda-label"],
+                    "contraindicated": False,
+                    "literature":      [],
                 })
 
-    # Telemetry: Log interaction check
     try:
-        pomaidb.ts_put(_STATE["db"], "search_stats", int(time.time()), 2, 1.0) # Type 2: DDI
-    except: pass
+        pomaidb.ts_put(_STATE["db"], "search_stats", int(time.time()), 2, 1.0)
+    except Exception:
+        pass
 
+    has_contraindicated = any(i.get("contraindicated") for i in interactions)
     return {
         "interactions": interactions,
-        "summary": "Check complete." if interactions else "No major interactions detected by basic heuristics."
+        "summary": (
+            "CONTRAINDICATED combination — do not co-administer." if has_contraindicated
+            else f"{len(interactions)} interaction(s) detected." if interactions
+            else "No interactions found in DDI database."
+        ),
     }
 
 # ---------------------------------------------------------------------------
@@ -607,6 +705,191 @@ def create_note(req: NoteCreateRequest):
     return {"status": "created", "note_id": note_id}
 
 
+# ---------------------------------------------------------------------------
+# Feature A — Polypharmacy Graph-RAG DDI Management
+# ---------------------------------------------------------------------------
+
+# Curated clinical DDI pairs (WHO Essential Medicines + FDA safety alerts)
+_CURATED_DDI = [
+    ("warfarin",       "aspirin",         "contraindicated", True,
+     "Combined anticoagulant + antiplatelet effect causes major bleeding risk. "
+     "Warfarin inhibits Vitamin K-dependent clotting; aspirin irreversibly inhibits platelets "
+     "and damages gastric mucosa."),
+    ("warfarin",       "ibuprofen",       "serious", False,
+     "NSAIDs displace warfarin from plasma protein binding and inhibit platelet aggregation, "
+     "elevating INR and bleeding risk."),
+    ("methotrexate",   "nsaid",           "serious", False,
+     "NSAIDs reduce renal clearance of methotrexate, raising plasma levels and risk of "
+     "myelosuppression and nephrotoxicity."),
+    ("ssri",           "maoi",            "contraindicated", True,
+     "Serotonin syndrome — potentially fatal. MAOIs inhibit serotonin breakdown; SSRIs block "
+     "reuptake. Combination causes dangerous serotonin accumulation."),
+    ("fluoxetine",     "tramadol",        "serious", False,
+     "Both increase serotonergic activity — risk of serotonin syndrome and seizures."),
+    ("clonidine",      "propranolol",     "serious", False,
+     "Abrupt clonidine discontinuation with beta-blockers causes severe rebound hypertension."),
+    ("digoxin",        "amiodarone",      "serious", False,
+     "Amiodarone inhibits P-glycoprotein, reducing digoxin clearance → toxicity "
+     "(bradycardia, AV block, arrhythmias)."),
+    ("simvastatin",    "amiodarone",      "serious", False,
+     "Amiodarone inhibits CYP3A4 metabolism of simvastatin → myopathy and rhabdomyolysis risk."),
+    ("lithium",        "ibuprofen",       "serious", False,
+     "NSAIDs reduce renal lithium clearance → toxic serum lithium levels "
+     "(tremors, confusion, arrhythmias)."),
+    ("clopidogrel",    "omeprazole",      "moderate", False,
+     "Omeprazole inhibits CYP2C19, reducing clopidogrel activation and antiplatelet effect."),
+    ("metformin",      "contrast dye",    "serious", False,
+     "Iodinated contrast media causes AKI, impairing metformin excretion → lactic acidosis."),
+    ("atorvastatin",   "clarithromycin",  "serious", False,
+     "Clarithromycin strongly inhibits CYP3A4 → markedly elevated atorvastatin → rhabdomyolysis."),
+    ("sildenafil",     "nitrate",         "contraindicated", True,
+     "Both cause vasodilation via cGMP pathway — combination produces severe, fatal hypotension."),
+    ("ciprofloxacin",  "antacid",         "moderate", False,
+     "Divalent cations (Mg²⁺, Al³⁺) chelate fluoroquinolones, reducing oral bioavailability by ~90%."),
+    ("spironolactone", "ace inhibitor",   "moderate", False,
+     "Both retain potassium — life-threatening hyperkalaemia risk, especially with renal impairment."),
+    ("phenytoin",      "valproate",       "moderate", False,
+     "Valproate displaces phenytoin from protein binding and inhibits its metabolism."),
+    ("metronidazole",  "alcohol",         "serious", False,
+     "Disulfiram-like reaction: nausea, vomiting, flushing, tachycardia within 30 min of alcohol."),
+    ("linezolid",      "ssri",            "contraindicated", True,
+     "Linezolid is a weak MAO inhibitor — combined with SSRIs, serotonin syndrome is likely fatal."),
+    ("tacrolimus",     "fluconazole",     "serious", False,
+     "Fluconazole potently inhibits CYP3A4/2C19 → drastically elevated tacrolimus → nephrotoxicity."),
+    ("aspirin",        "ibuprofen",       "moderate", False,
+     "Ibuprofen competitively inhibits aspirin's irreversible COX-1 acetylation, attenuating "
+     "its cardioprotective antiplatelet effect."),
+]
+
+
+def _ddi_write_edge(drug_a: str, drug_b: str, severity: str,
+                    mechanism: str, sources: List[str], contraindicated: bool) -> None:
+    """Persist a symmetric DDI edge in both directions and update the index."""
+    a, b = drug_a.lower().strip(), drug_b.lower().strip()
+    edge = json.dumps({
+        "severity":        severity,
+        "mechanism":       mechanism,
+        "sources":         sources,
+        "contraindicated": contraindicated,
+    })
+    pomaidb.kv_put(_STATE["db"], DDI_GRAPH_MEMBRANE, f"ddi:{a}:{b}", edge)
+    pomaidb.kv_put(_STATE["db"], DDI_GRAPH_MEMBRANE, f"ddi:{b}:{a}", edge)
+    for node, other in ((a, b), (b, a)):
+        idx_key = f"ddi_index:{node}"
+        try:
+            raw = pomaidb.kv_get(_STATE["db"], DDI_GRAPH_MEMBRANE, idx_key)
+        except pomaidb.PomaiDBError:
+            raw = None
+        known = json.loads(raw) if raw else []
+        if other not in known:
+            known.append(other)
+        pomaidb.kv_put(_STATE["db"], DDI_GRAPH_MEMBRANE, idx_key, json.dumps(known))
+
+
+class DDIInteractionRequest(BaseModel):
+    drug_a:          str
+    drug_b:          str
+    severity:        str = Field(..., pattern="^(contraindicated|serious|moderate|minor)$")
+    mechanism:       str
+    sources:         List[str] = Field(default_factory=list)
+    contraindicated: bool = False
+
+
+@app.post("/api/ddi/add-interaction")
+def ddi_add_interaction(req: DDIInteractionRequest):
+    """Persist a curated DDI edge (both directions + adjacency index)."""
+    _ddi_write_edge(req.drug_a, req.drug_b, req.severity,
+                    req.mechanism, req.sources, req.contraindicated)
+    return {"status": "added", "pair": f"{req.drug_a} ↔ {req.drug_b}"}
+
+
+@app.get("/api/ddi/interactions/{drug_name}")
+def ddi_get_interactions(drug_name: str):
+    """Return all known DDI partners for a given drug name."""
+    idx_key = f"ddi_index:{drug_name.lower().strip()}"
+    try:
+        raw = pomaidb.kv_get(_STATE["db"], DDI_GRAPH_MEMBRANE, idx_key)
+    except pomaidb.PomaiDBError:
+        raw = None
+    partners = json.loads(raw) if raw else []
+    edges = []
+    for partner in partners:
+        try:
+            edge_raw = pomaidb.kv_get(_STATE["db"], DDI_GRAPH_MEMBRANE,
+                                      f"ddi:{drug_name.lower().strip()}:{partner}")
+            if edge_raw:
+                edge = json.loads(edge_raw)
+                edge["partner"] = partner
+                edges.append(edge)
+        except pomaidb.PomaiDBError:
+            pass
+    return {"drug": drug_name, "interactions": edges}
+
+
+@app.post("/api/ddi/seed")
+def ddi_seed():
+    """
+    Populate the DDI graph from:
+      1. Curated clinical pairs (20 high-evidence interactions)
+      2. FDA drug label cross-references (warnings that name other drugs)
+    """
+    # Source 1 — curated pairs
+    for drug_a, drug_b, severity, contraindicated, mechanism in _CURATED_DDI:
+        _ddi_write_edge(drug_a, drug_b, severity, mechanism,
+                        ["curated-clinical"], contraindicated)
+    curated_count = len(_CURATED_DDI)
+
+    # Source 2 — FDA label warnings cross-reference
+    drug_names: List[str] = []
+    for drug_id in range(1, 5001):
+        try:
+            raw = pomaidb.meta_get(_STATE["db"], META_MEMBRANE, str(drug_id))
+            if raw:
+                name = json.loads(raw).get("name", "").strip().lower()
+                if name:
+                    drug_names.append(name)
+        except Exception:
+            pass
+
+    name_set = set(drug_names)
+    fda_added = 0
+    for drug_id in range(1, 5001):
+        try:
+            raw = pomaidb.meta_get(_STATE["db"], META_MEMBRANE, str(drug_id))
+            if not raw:
+                continue
+            d = json.loads(raw)
+            a = d.get("name", "").strip().lower()
+            warnings = d.get("warnings", "").lower()
+            if not a or not warnings:
+                continue
+            for b in name_set:
+                if b == a:
+                    continue
+                if b in warnings:
+                    key = f"ddi:{a}:{b}"
+                    try:
+                        existing = pomaidb.kv_get(_STATE["db"], DDI_GRAPH_MEMBRANE, key)
+                    except pomaidb.PomaiDBError:
+                        existing = None
+                    if not existing:
+                        _ddi_write_edge(
+                            a, b, "moderate",
+                            f"FDA label for {d['name']} warns about use with {b}.",
+                            ["fda-label"], False,
+                        )
+                        fda_added += 1
+        except Exception:
+            pass
+
+    return {
+        "status":       "seeded",
+        "curated_pairs": curated_count,
+        "fda_pairs":     fda_added,
+        "total":         curated_count + fda_added,
+    }
+
+
 @app.get("/api/notes/{patient_id}")
 def get_notes(patient_id: str):
     idx_key = f"notes_idx:{patient_id}"
@@ -623,6 +906,154 @@ def get_notes(patient_id: str):
         except pomaidb.PomaiDBError:
             pass
     return notes
+
+
+# ---------------------------------------------------------------------------
+# Feature B — Real-time Clinical Alert Agent: models & helpers
+# ---------------------------------------------------------------------------
+
+class MedicationAddRequest(BaseModel):
+    drug_id:   Optional[int] = None
+    drug_name: str
+    dose:      Optional[str] = None
+
+
+class AlertConfigRequest(BaseModel):
+    vital_name: str
+    min_value:  Optional[float] = None
+    max_value:  Optional[float] = None
+
+
+def _kv_safe_get(membrane: str, key: str) -> Optional[str]:
+    """kv_get that swallows PomaiDBError (key not found) and returns None."""
+    try:
+        return pomaidb.kv_get(_STATE["db"], membrane, key)
+    except pomaidb.PomaiDBError:
+        return None
+
+
+def _generate_alert(patient_id: str, vital_name: str, value: float, ts: int,
+                    cfg: Dict) -> Dict:
+    """
+    Build and persist a structured ADR alert.
+
+    Steps:
+      1. Load patient's current medications.
+      2. Compute overshoot severity (warning / critical).
+      3. RAG-search drug_rag membrane for adverse-reaction evidence.
+      4. Optionally enrich via cheesepath clinical agent (CLINICAL_AGENT_URL).
+      5. Persist alert in PATIENT_ALERTS_MEMBRANE + update indexes.
+    """
+    # Load current medications
+    meds_raw = _kv_safe_get(PATIENT_MEDS_MEMBRANE, f"meds:{patient_id}")
+    meds: List[Dict] = json.loads(meds_raw) if meds_raw else []
+    med_names = [m.get("drug_name", "") for m in meds if m.get("drug_name")]
+
+    # Severity from breach magnitude
+    min_val = cfg.get("min_value")
+    max_val = cfg.get("max_value")
+    overshoot = 0.0
+    if max_val is not None and value > max_val:
+        overshoot = (value - max_val) / max_val
+    elif min_val is not None and value < min_val and min_val != 0:
+        overshoot = (min_val - value) / min_val
+    severity = "critical" if overshoot > 0.3 else "warning"
+
+    # RAG evidence
+    rag_evidence: List[str] = []
+    try:
+        rag_query = (
+            f"adverse drug reaction {vital_name} "
+            + " ".join(med_names[:5])
+        )
+        hits = pomaidb.search_rag(
+            _STATE["db"], "drug_rag",
+            vector=embed(rag_query).tolist(), topk=3,
+        )
+        for hit in hits:
+            text = hit[4] if len(hit) > 4 else ""
+            if text:
+                rag_evidence.append(text[:300])
+    except Exception as e:
+        log.warning("Alert RAG search failed: %s", e)
+
+    # Optional cheesepath clinical agent enrichment
+    agent_analysis: Optional[str] = None
+    if CLINICAL_AGENT_URL and med_names:
+        try:
+            import httpx as _httpx
+            resp = _httpx.post(
+                CLINICAL_AGENT_URL.rstrip("/") + "/analyze",
+                json={
+                    "patient_id": patient_id,
+                    "vital_name": vital_name,
+                    "value":      value,
+                    "medications": meds,
+                    "threshold":   cfg,
+                },
+                timeout=20.0,
+            )
+            if resp.status_code == 200:
+                agent_analysis = resp.json().get("analysis")
+        except Exception as e:
+            log.warning("Clinical agent call failed (non-fatal): %s", e)
+
+    alert_id = f"{patient_id}:{vital_name}:{ts}"
+    alert = {
+        "alert_id":       alert_id,
+        "patient_id":     patient_id,
+        "vital_name":     vital_name,
+        "value":          value,
+        "threshold":      cfg,
+        "severity":       severity,
+        "suspected_meds": med_names,
+        "rag_evidence":   rag_evidence,
+        "agent_analysis": agent_analysis,
+        "ts":             ts,
+        "resolved":       False,
+        "resolved_at":    None,
+    }
+
+    pomaidb.kv_put(_STATE["db"], PATIENT_ALERTS_MEMBRANE,
+                   f"alert:{alert_id}", json.dumps(alert))
+
+    # Per-patient alert index
+    idx_key = f"alerts_idx:{patient_id}"
+    raw_idx = _kv_safe_get(PATIENT_ALERTS_MEMBRANE, idx_key)
+    alert_keys: List[str] = json.loads(raw_idx) if raw_idx else []
+    alert_keys.append(f"alert:{alert_id}")
+    pomaidb.kv_put(_STATE["db"], PATIENT_ALERTS_MEMBRANE, idx_key,
+                   json.dumps(alert_keys))
+
+    # Global active-alerts index (for dashboard)
+    raw_global = _kv_safe_get(PATIENT_ALERTS_MEMBRANE, "active_alerts")
+    active: List[str] = json.loads(raw_global) if raw_global else []
+    active.append(f"alert:{alert_id}")
+    pomaidb.kv_put(_STATE["db"], PATIENT_ALERTS_MEMBRANE,
+                   "active_alerts", json.dumps(active))
+
+    log.warning(
+        "ALERT patient=%s vital=%s value=%.1f severity=%s meds=%s",
+        patient_id, vital_name, value, severity, med_names,
+    )
+    return alert
+
+
+def _check_vital_alerts(patient_id: str, vital_name: str,
+                         value: float, ts: int) -> Optional[Dict]:
+    """Return a generated alert if value breaches the configured threshold, else None."""
+    cfg_raw = _kv_safe_get(PATIENT_ALERTS_MEMBRANE,
+                            f"alert_config:{patient_id}:{vital_name}")
+    if not cfg_raw:
+        return None
+    cfg = json.loads(cfg_raw)
+    min_val = cfg.get("min_value")
+    max_val = cfg.get("max_value")
+    breached = (
+        (max_val is not None and value > max_val)
+        or (min_val is not None and value < min_val)
+    )
+    return _generate_alert(patient_id, vital_name, value, ts, cfg) if breached else None
 
 
 # ---------------------------------------------------------------------------
@@ -688,7 +1119,11 @@ def log_vitals(patient_id: str, req: VitalsLogRequest):
         keys.append(log_key)
     pomaidb.kv_put(_STATE["db"], PATIENT_REGISTRY_MEMBRANE, idx_key, json.dumps(keys))
 
-    return {"status": "logged", "series_id": series_id}
+    alert = _check_vital_alerts(patient_id, req.vital_name, req.value, ts)
+    result: Dict[str, Any] = {"status": "logged", "series_id": series_id}
+    if alert:
+        result["alert"] = alert
+    return result
 
 
 @app.get("/api/patients/{patient_id}/vitals")
@@ -711,6 +1146,139 @@ def get_vitals(patient_id: str, vital: Optional[str] = None):
             pass
     records.sort(key=lambda x: x["ts"])
     return records
+
+
+# ---------------------------------------------------------------------------
+# Feature B continued — Medications, Alert Config, Alert Retrieval
+# ---------------------------------------------------------------------------
+
+@app.post("/api/patients/{patient_id}/medications")
+def add_medication(patient_id: str, req: MedicationAddRequest):
+    """Add a medication to the patient's current medication list."""
+    meds_raw = _kv_safe_get(PATIENT_MEDS_MEMBRANE, f"meds:{patient_id}")
+    meds: List[Dict] = json.loads(meds_raw) if meds_raw else []
+    entry = {
+        "drug_id":   req.drug_id,
+        "drug_name": req.drug_name,
+        "dose":      req.dose,
+        "added_at":  int(time.time()),
+    }
+    # Avoid exact duplicates
+    if not any(m.get("drug_name", "").lower() == req.drug_name.lower() for m in meds):
+        meds.append(entry)
+    pomaidb.kv_put(_STATE["db"], PATIENT_MEDS_MEMBRANE,
+                   f"meds:{patient_id}", json.dumps(meds))
+    return {"status": "added", "patient_id": patient_id, "medication": entry}
+
+
+@app.delete("/api/patients/{patient_id}/medications/{drug_name}")
+def remove_medication(patient_id: str, drug_name: str):
+    """Remove a medication from the patient's current list by drug name."""
+    meds_raw = _kv_safe_get(PATIENT_MEDS_MEMBRANE, f"meds:{patient_id}")
+    meds: List[Dict] = json.loads(meds_raw) if meds_raw else []
+    before = len(meds)
+    meds = [m for m in meds if m.get("drug_name", "").lower() != drug_name.lower()]
+    pomaidb.kv_put(_STATE["db"], PATIENT_MEDS_MEMBRANE,
+                   f"meds:{patient_id}", json.dumps(meds))
+    removed = before - len(meds)
+    return {"status": "removed" if removed else "not_found", "removed_count": removed}
+
+
+@app.get("/api/patients/{patient_id}/medications")
+def get_medications(patient_id: str):
+    """Return the current medication list for a patient."""
+    meds_raw = _kv_safe_get(PATIENT_MEDS_MEMBRANE, f"meds:{patient_id}")
+    return json.loads(meds_raw) if meds_raw else []
+
+
+@app.post("/api/patients/{patient_id}/alert-config")
+def set_alert_config(patient_id: str, req: AlertConfigRequest):
+    """Set vital-sign threshold for automated alert generation."""
+    if req.min_value is None and req.max_value is None:
+        raise HTTPException(status_code=400,
+                            detail="Provide at least one of min_value or max_value.")
+    cfg = {"min_value": req.min_value, "max_value": req.max_value}
+    pomaidb.kv_put(_STATE["db"], PATIENT_ALERTS_MEMBRANE,
+                   f"alert_config:{patient_id}:{req.vital_name}", json.dumps(cfg))
+
+    # Track configured vital names per patient
+    names_raw = _kv_safe_get(PATIENT_ALERTS_MEMBRANE,
+                              f"alert_vitals:{patient_id}")
+    names: List[str] = json.loads(names_raw) if names_raw else []
+    if req.vital_name not in names:
+        names.append(req.vital_name)
+    pomaidb.kv_put(_STATE["db"], PATIENT_ALERTS_MEMBRANE,
+                   f"alert_vitals:{patient_id}", json.dumps(names))
+    return {"status": "configured", "patient_id": patient_id,
+            "vital_name": req.vital_name, "threshold": cfg}
+
+
+@app.get("/api/patients/{patient_id}/alert-config")
+def get_alert_configs(patient_id: str):
+    """Return all configured vital-sign thresholds for a patient."""
+    names_raw = _kv_safe_get(PATIENT_ALERTS_MEMBRANE,
+                              f"alert_vitals:{patient_id}")
+    names: List[str] = json.loads(names_raw) if names_raw else []
+    result = []
+    for vital_name in names:
+        cfg_raw = _kv_safe_get(PATIENT_ALERTS_MEMBRANE,
+                                f"alert_config:{patient_id}:{vital_name}")
+        if cfg_raw:
+            cfg = json.loads(cfg_raw)
+            cfg["vital_name"] = vital_name
+            result.append(cfg)
+    return result
+
+
+@app.get("/api/patients/{patient_id}/alerts")
+def get_patient_alerts(patient_id: str, limit: int = 100):
+    """Return the most recent alerts for a patient, newest first."""
+    idx_raw = _kv_safe_get(PATIENT_ALERTS_MEMBRANE, f"alerts_idx:{patient_id}")
+    keys: List[str] = json.loads(idx_raw) if idx_raw else []
+    alerts = []
+    for k in reversed(keys[-limit:]):
+        raw = _kv_safe_get(PATIENT_ALERTS_MEMBRANE, k)
+        if raw:
+            alerts.append(json.loads(raw))
+    return alerts
+
+
+@app.get("/api/alerts/active")
+def get_active_alerts():
+    """Return all unresolved alerts across all patients."""
+    raw = _kv_safe_get(PATIENT_ALERTS_MEMBRANE, "active_alerts")
+    keys: List[str] = json.loads(raw) if raw else []
+    alerts = []
+    for k in keys:
+        alert_raw = _kv_safe_get(PATIENT_ALERTS_MEMBRANE, k)
+        if alert_raw:
+            a = json.loads(alert_raw)
+            if not a.get("resolved"):
+                alerts.append(a)
+    alerts.sort(key=lambda x: x["ts"], reverse=True)
+    return alerts
+
+
+@app.post("/api/alerts/{alert_id}/resolve")
+def resolve_alert(alert_id: str):
+    """Mark an alert as resolved."""
+    key = f"alert:{alert_id}"
+    raw = _kv_safe_get(PATIENT_ALERTS_MEMBRANE, key)
+    if not raw:
+        raise HTTPException(status_code=404, detail="Alert not found")
+    alert = json.loads(raw)
+    alert["resolved"]    = True
+    alert["resolved_at"] = int(time.time())
+    pomaidb.kv_put(_STATE["db"], PATIENT_ALERTS_MEMBRANE, key, json.dumps(alert))
+
+    # Remove from active_alerts index
+    active_raw = _kv_safe_get(PATIENT_ALERTS_MEMBRANE, "active_alerts")
+    active: List[str] = json.loads(active_raw) if active_raw else []
+    if key in active:
+        active.remove(key)
+    pomaidb.kv_put(_STATE["db"], PATIENT_ALERTS_MEMBRANE,
+                   "active_alerts", json.dumps(active))
+    return {"status": "resolved", "alert_id": alert_id}
 
 
 # ---------------------------------------------------------------------------
@@ -742,8 +1310,10 @@ def ingest_guideline(req: GuidelineIngestRequest):
                 vector=vec,
                 text=chunk
             )
-
+        
+        pomaidb.freeze(_STATE["db"])
         return {"status": "ingested", "doc_id": doc_id, "title": req.title}
+
     except Exception as e:
         log.error("Guideline ingest failed: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
@@ -755,8 +1325,11 @@ def search_guidelines(q: str, top_k: int = 5):
         vec = embed(q).tolist()
         hits = pomaidb.search_rag(
             _STATE["db"], GUIDELINES_MEMBRANE,
-            vector=vec, topk=top_k,
+            token_ids=[1], # Dummy token to match ingestion and enable search
+            vector=vec,
+            topk=top_k,
         )
+
         results = []
         for item in hits:
             # hits: list of (chunk_id, doc_id, score, token_matches, chunk_text)
@@ -808,6 +1381,82 @@ def add_graph_edge(req: GraphEdgeRequest):
         edges.append(new_edge)
     pomaidb.kv_put(_STATE["db"], DRUG_GRAPH_MEMBRANE, from_key, json.dumps(edges))
     return {"status": "edge_added", "from": req.from_node, "to": req.to_node}
+
+
+@app.post("/api/docking/search")
+def docking_search(smiles: str, top_k: int = 10, filter_toxic: bool = True):
+    """
+    3D shape-based drug similarity search using USRCAT fingerprints (60-dim).
+
+    Requires the docking PomaiDB to be pre-built by running:
+        python drug_repurposing_poc.py --mode docking
+
+    Returns 503 if the docking database is not yet initialised.
+    """
+    # Lazy-open docking DB (cached in _STATE)
+    if _STATE.get("docking_db") is None:
+        if not os.path.isdir(DOCKING_DB_PATH):
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "Docking DB not initialised. "
+                    "Run: python drug_repurposing_poc.py --mode docking"
+                ),
+            )
+        try:
+            _STATE["docking_db"] = pomaidb.open_db(
+                DOCKING_DB_PATH, dim=60, metric="ip", shards=1
+            )
+        except Exception as e:
+            raise HTTPException(status_code=503, detail=f"Docking DB open failed: {e}")
+
+    # Generate 3-D fingerprint for query SMILES
+    try:
+        import sys as _sys, os as _os
+        _poc_dir = _os.path.dirname(_os.path.dirname(__file__))
+        if _poc_dir not in _sys.path:
+            _sys.path.insert(0, _poc_dir)
+        from drug_repurposing_poc import get_3d_fingerprint
+        fp = get_3d_fingerprint(smiles)
+    except ImportError:
+        raise HTTPException(
+            status_code=503,
+            detail="rdkit-pypi not installed. Run: pip install rdkit-pypi",
+        )
+
+    if fp is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Could not generate 3D conformer for the supplied SMILES string.",
+        )
+
+    # ANN search in docking DB
+    try:
+        ids, scores = search_one(_STATE["docking_db"], fp.tolist(), topk=top_k * 5)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Docking search failed: {e}")
+
+    results = []
+    for rid, score in zip(ids, scores):
+        try:
+            raw = pomaidb.meta_get(_STATE["docking_db"], "compound_meta_3d", str(rid))
+            if not raw:
+                continue
+            meta = json.loads(raw)
+            if filter_toxic and meta.get("is_toxic", 1) != 0:
+                continue
+            results.append({
+                "id":         rid,
+                "smiles":     meta.get("smiles", ""),
+                "is_toxic":   meta.get("is_toxic", -1),
+                "similarity": round(float(score), 4),
+            })
+            if len(results) >= top_k:
+                break
+        except Exception:
+            pass
+
+    return {"query_smiles": smiles, "results": results}
 
 
 @app.post("/api/graph/seed")

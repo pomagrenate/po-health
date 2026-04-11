@@ -216,6 +216,12 @@ def open_db(db_path: str):
     _create_membrane(db, META_MEMBRANE,          pomaidb.MEMBRANE_KIND_META)
     _create_membrane(db, FILTER_MEMBRANE,        pomaidb.MEMBRANE_KIND_KEYVALUE)
     _create_membrane(db, FILTER_VALUES_MEMBRANE, pomaidb.MEMBRANE_KIND_KEYVALUE)
+    try:
+        if hasattr(pomaidb, "create_rag_membrane"):
+            pomaidb.create_rag_membrane(db, "drug_rag", DIM)
+    except Exception as e:
+        if "already exists" not in str(e).lower():
+            log.warning("drug_rag init failed: %s", e)
     log.info("Membranes ready.")
     return db
 

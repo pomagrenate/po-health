@@ -5,6 +5,12 @@ pomaidb_drugs/
 __pycache__/
 *.pyc
 medical_retrieval/pomaidb_drugs/
+medical_retrieval/pomaidb_docking/
+medical_retrieval/test_db/
+medical_retrieval/test_docking_db/
+pomaidb_docking/
+*.webp
+*.png
 
 # Environment
 .venv/

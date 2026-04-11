@@ -35,7 +35,9 @@
     <button class="nav-btn" data-tab="patients">Patients</button>
     <button class="nav-btn" data-tab="graph">Knowledge Graph</button>
     <button class="nav-btn" data-tab="notes">Notes</button>
+    <button class="nav-btn" data-tab="docking">Molecular Search</button>
   </nav>
+
 
   <!-- ── Layout ─────────────────────────────────────────────────────────── -->
   <div class="layout">
@@ -204,7 +206,26 @@
         <div id="notes-list" class="results-grid"></div>
       </div>
 
+      <!-- ── Docking Tab (3D Molecular Search) ────────────────────────── -->
+      <div id="tab-docking" class="tab-content">
+        <h2>3D Molecular Similarity Search</h2>
+        <p class="subtitle">Find structurally similar, non-toxic alternatives using USRCAT shape fingerprints.</p>
+        
+        <div class="docking-controls" style="display:flex;gap:0.5rem;margin-bottom:1rem;flex-wrap:wrap">
+          <input type="text" id="docking-smiles" placeholder="Enter SMILES (e.g. Aspirin: CC(=O)OC1=CC=CC=C1C(=O)O)" class="sidebar-input" style="flex:1">
+          <label style="display:flex;align-items:center;gap:0.4rem;font-size:0.9rem;cursor:pointer">
+            <input type="checkbox" id="docking-filter-toxic" checked> Filter Toxic
+          </label>
+          <button id="docking-search-btn" class="primary-btn">Compute Similarity</button>
+        </div>
+        
+        <div id="docking-results" class="results-grid">
+           <p class="state-msg">Enter a SMILES string to find matching compounds in the 3D docking database.</p>
+        </div>
+      </div>
+
     </main>
+
 
   </div>
 

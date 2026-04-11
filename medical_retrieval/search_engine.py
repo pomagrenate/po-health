@@ -30,6 +30,7 @@ def find_drugs(
     filters: Optional[Dict[str, str]] = None,
     top_k: int = 10,
     patient_friendly: bool = False,
+    current_meds: Optional[List[int]] = None,
 ) -> List[Dict[str, Any]]:
     """
     Hybrid search: semantic ANN similarity + structured metadata filter.
@@ -51,9 +52,9 @@ def find_drugs(
     
     # Phase 6: Try RAG search first for highly relevant snippets
     candidate_ids, candidate_scores = [], []
+    seen = set()
     try:
         rag_hits = pomaidb.search_rag(db, "drug_rag", vector=query_vec.tolist(), topk=candidate_k)
-        seen = set()
         for hit in rag_hits:
             doc_id = hit[1]
             if doc_id not in seen:
@@ -62,20 +63,21 @@ def find_drugs(
                 seen.add(doc_id)
     except Exception as e:
         log.warning("RAG search failed: %s", e)
+    
+    # 1. Broad candidate retrieval (top 100)
+    candidate_k = 100
+    ann_ids, ann_scores = search_one(db, query_vec.tolist(), topk=candidate_k)
+    for aid, ascore in zip(ann_ids, ann_scores):
 
-    # Fallback/Augment with ANN if needed
-    if len(candidate_ids) < top_k:
-        ann_ids, ann_scores = search_one(db, query_vec.tolist(), topk=candidate_k)
-        seen = set(candidate_ids)
-        for rid, score in zip(ann_ids, ann_scores):
-            if rid not in seen:
-                candidate_ids.append(rid)
-                candidate_scores.append(score)
-                seen.add(rid)
+        if aid not in seen:
+            candidate_ids.append(aid)
+            candidate_scores.append(ascore)
+            seen.add(aid)
 
-    results: List[Dict[str, Any]] = []
-    for rid, score in zip(candidate_ids, candidate_scores):
-        raw_meta = pomaidb.meta_get(db, META_MEMBRANE, str(rid))
+    
+    results = []
+    for cid, score in zip(candidate_ids, candidate_scores):
+        raw_meta = pomaidb.meta_get(db, "drug_meta", str(cid))
         if not raw_meta:
             continue
         drug = json.loads(raw_meta)
@@ -84,28 +86,47 @@ def find_drugs(
         
         drug["similarity"] = round(float(score), 4)
         
-        # High-risk detection (rule-based contraindication and warning analysis)
-        cons = " ".join(drug.get("contraindications", [])).lower()
-        warn = drug.get("warnings", "").lower()
-        risk_text = cons + " " + warn
-        
-        risk_keywords = [
-            "death", "fatal", "severe", "life-threatening", "suicidal", 
-            "black box", "emergency", "cardiac arrest", "respiratory depression"
-        ]
-        drug["is_high_risk"] = any(w in risk_text for w in risk_keywords)
+        # 2. Industrial Graph-RAG DDI Check (Adverse Interactions)
+        drug["interactions"] = []
+        if current_meds:
+            for med_id in current_meds:
+                # Check for direct edge in Interaction Graph
+                neighbors = pomaidb.graph_get_neighbors(db, int(cid))
+                for n_dst, n_type, n_rank in neighbors:
+                    if int(n_dst) == int(med_id) and n_type == 2: # 2 = Adverse
+                        # 3. Native RAG Retrieval for Evidence
+                        evidence = pomaidb.retrieve_context(
+                            db, "drug_rag", 
+                            f"interaction between {drug['name']} and drug-id {med_id}",
+                            top_k=2
+                        )
+                        drug["interactions"].append({
+                            "with_med_id": med_id,
+                            "severity": "High" if n_rank > 5 else "Moderate",
+                            "evidence": evidence or "Known interaction documented in clinical graph."
+                        })
+
+        # 4. Standard Risk Analysis (Fall-back)
+        if not drug["interactions"]:
+            cons = " ".join(drug.get("contraindications", [])).lower()
+            warn = drug.get("warnings", "").lower()
+            results_text = cons + " " + warn
+            risk_keywords = ["death", "fatal", "severe", "life-threatening"]
+            drug["is_high_risk"] = any(w in results_text for w in risk_keywords)
+        else:
+            drug["is_high_risk"] = True
 
         if patient_friendly:
             drug["indications"] = [_simplify_medical_text(ind) for ind in drug.get("indications", [])]
-            drug["patient_note"] = "Always consult with a healthcare professional before starting new medication."
+            drug["patient_note"] = "WARNING: Interaction detected. Consult a physician immediately." if drug["interactions"] else None
 
         results.append(drug)
         if len(results) >= top_k:
             break
 
     log.info(
-        "Query '%s' filters=%s pf=%s → %d results",
-        query[:60], filters, patient_friendly, len(results)
+        "Phase 8 Query '%s' (Meds=%s) → %d results",
+        query[:50], current_meds, len(results)
     )
     return results
 
