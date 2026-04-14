@@ -1,0 +1,18 @@
+pomai.manifest.v3
+version 1
+membrane __default__
+membrane clinical_guidelines
+membrane clinical_notes
+membrane ddi_graph
+membrane drug_disease_graph
+membrane drug_filters
+membrane drug_meta
+membrane drug_rag
+membrane filter_values
+membrane patient_alerts
+membrane patient_medications
+membrane patient_registry
+membrane patient_vitals
+membrane search_stats
+membrane user_bookmarks
+\ûy

@@ -1,0 +1,12 @@
+pomai.membrane.v3
+name filter_values
+shards 1
+dim 0
+kind KEYVALUE
+metric L2
+index_params 0 64 16 32 200 64
+sync_lsn 0
+ttl_sec 0
+retention_max_count 0
+retention_max_bytes 0
+FÐÁl

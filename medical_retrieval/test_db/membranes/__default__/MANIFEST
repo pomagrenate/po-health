@@ -1,0 +1,12 @@
+pomai.membrane.v3
+name __default__
+shards 1
+dim 384
+kind VECTOR
+metric IP
+index_params 1 64 16 32 200 64
+sync_lsn 0
+ttl_sec 0
+retention_max_count 0
+retention_max_bytes 0
+Nµ”

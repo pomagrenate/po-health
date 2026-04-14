@@ -1,82 +1,108 @@
-# Po-Health: Advanced Drug Retrieval and Repurposing System
+# Po-Health: Localized Clinical Decision Support System (CDSS)
 
-Po-Health is a specialized platform designed for medical professionals to perform semantic searches and identify potential drug repurposing candidates. By leveraging state-of-the-art embedding models and a high-performance vector database, the system provides accurate and contextually relevant results for complex medical queries.
+![Po-Health Hero](screenshot.png)
 
-## Core Features
+Po-Health is a production-grade clinical platform designed to provide evidence-based decision support through localized AI synthesis. It bridges the gap between patient telemetry, medication safety (DDI), and institutional guidelines (RAG) using high-performance, privacy-preserving infrastructure.
 
-- Semantic Drug Search: Perform natural language queries to find drugs with specific indications, ingredients, or therapeutic effects.
-- Safe Drug Repurposing: A proof-of-concept pipeline that identifies structurally similar, non-toxic alternatives to existing compounds using ChemBERTa embeddings and Tox21 toxicity data.
-- Hybrid Search Infrastructure: Combines low-latency vector similarity search with structured metadata filtering (e.g., dose form, status) for precise information retrieval.
-- Embedded Architecture: High-performance search powered by PomaiDB, a native vector database integrated directly into the application process.
-- Patient-Friendly Mode: A functional diversity feature that simplifies complex clinical indications into plain language for non-medical users.
+## 🏗️ Architecture Overview
 
-## Interface Preview
+Po-Health operates on a localized three-tier architecture ensuring zero dependency on external AI services:
 
-![Drug Retrieval Interface](screenshot.png)
-
-## Technical Features (Production Ready)
-
-- Health Monitoring: Real-time system health reporting via the `/health` endpoint.
-- Structured Logging: Production-ready JSON logging for observability and log aggregation.
-- Resilience: Global exception handling and request validation for enhanced stability.
-- Security: Integrated security headers, CORS management, and built-in rate limiting for search endpoints.
-- Containerization: Full Docker and Docker Compose support for reproducible deployments.
-
-## Technology Stack
-
-- Language: Python
-- Embeddings: ChemBERTa (77M-MLM) and sentence-transformers
-- Database: PomaiDB (embedded C++ vector engine)
-- Backend: FastAPI
-- Frontend: Vanilla HTML and CSS
-
-## Project Structure
-
-- drug_repurposing_poc.py: Implementation of the drug similarity and toxicity filtering pipeline.
-- medical_retrieval/: The core web application directory.
-  - server.py: FastAPI server managing the hybrid search engine.
-  - ingest.py: Utility for populating the PomaiDB instance with drug data.
-  - logging_config.py: Structured JSON logging configuration.
-  - search_engine.py: Logic for ranking, filtering, and simplifying search results.
-  - static/: Web interface assets.
-- pomaidb/: Submodule containing the native vector database engine.
-- Dockerfile / docker-compose.yml: Production deployment configurations.
-
-## Installation and Setup
-
-### Build the Native Library
-
-Navigate to the PomaiDB directory and build the C library:
-
-```bash
-cd pomaidb
-cmake -B build
-cmake --build build
+```mermaid
+graph TD
+    User([Clinician]) <--> NextJS[Next.js Frontend: Port 3000]
+    NextJS <--> FastAPI[FastAPI Microservice: Port 8000]
+    FastAPI <--> PomaiDB[(PomaiDB: Local Vector Storage)]
+    FastAPI <--> Cheesebrain[Cheesebrain: Port 8081]
+    Cheesebrain <--> GGUF[Local Qwen 2.5 GGUF Model]
 ```
 
-### Environment Setup
+### Core Components
+1. **Clinical Workspace (Frontend)**: A Next.js 14+ interface for structured SOAP notes and decision support.
+2. **Clinical Microservice (Backend)**: FastAPI-based orchestration layer for RAG retrieval and safety filters.
+3. **Cheesebrain (Inference Engine)**: High-performance C++ GGUF inference server for localized reasoning.
 
-Install the required Python dependencies:
+---
 
-```bash
-pip install -r medical_retrieval/requirements.txt python-dotenv
-```
+## 🚀 Setup & Build Instructions
 
-### Running the Server
-
-Start the FastAPI application:
-
-```bash
-cd medical_retrieval
-uvicorn server:app --port 8000
-```
-
-### Docker Deployment
-
-To run the entire stack in a containerized environment:
+### 1. Build the Inference Engine (`cheesebrain`)
+Po-Health uses a custom fork of a high-performance C++ runtime.
 
 ```bash
-docker-compose up --build
+cd cheesebrain
+cmake -B build -DGGML_AVX2=ON # Enable AVX2 for x86 CPUs
+cmake --build build --config Release -j$(nproc)
+```
+The binary will be located at `cheesebrain/build/bin/cheese-server`.
+
+### 2. Clinical Model Acquisition
+We recommend the **Qwen 2.5** series for its clinical reasoning proficiency and localized performance.
+
+| Model Variant | Recommendation | Size |
+| :--- | :--- | :--- |
+| **Qwen 2.5 0.5B** | Real-time clinical impressions / Low-spec HW | ~650 MB |
+| **Qwen 2.5 1.5B** | Balanced reasoning and throughput | ~1.6 GB |
+| **Qwen 2.5 7B** | High-fidelity specialty clinical analysis | ~5.5 GB |
+
+**Quick Download (0.5B Q8_0):**
+```bash
+mkdir -p models
+curl -L -o models/clinical_reasoner.gguf https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q8_0.gguf?download=true
 ```
 
-Access the web interface at http://localhost:8000 and the health check at http://localhost:8000/health.
+### 3. Backend Microservice Setup
+Requires Python 3.12+.
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -r services/requirements.txt
+```
+
+### 4. Frontend Workspace Setup
+Requires Node.js 20+.
+
+```bash
+npm install
+```
+
+---
+
+## 🚦 Running the Platform
+
+To launch the full Po-Health stack, start the following services in order:
+
+### 1. Inference Server
+```bash
+./cheesebrain/build/bin/cheese-server -m models/clinical_reasoner.gguf --port 8081
+```
+
+### 2. Clinical Microservice
+```bash
+python services/server.py
+```
+
+### 3. Clinical Frontend
+```bash
+npm run dev
+```
+
+The platform is now accessible at **http://localhost:3000**.
+
+---
+
+## 🧠 Clinical Reasoning Agent
+
+The agent synthesizes cross-domain data into actionable insights:
+- **Telemetry Analysis**: Real-time heartbeat/BP trend monitoring.
+- **DDI Filter**: Graph-based safety checks for polypharmacy risks.
+- **RAG Guidelines**: Semantic retrieval from institutional clinical protocols.
+- **SOAP Automation**: One-click incorporation of AI-suggested plans into patient notes.
+
+---
+
+## 🛡️ Data Sovereignty & Security
+- **Strictly Local**: No patient data ever leaves your hardware.
+- **Isolated Membranes**: PomaiDB ensures data isolation between patient EHR and institutional research data.
+- **Audit Logging**: All clinical reasoning results include timestamps and RAG evidence source attribution.

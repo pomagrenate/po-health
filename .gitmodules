@@ -4,3 +4,6 @@
 [submodule "cheesepath"]
 	path = cheesepath
 	url = https://github.com/pomagrenate/cheesepath.git
+[submodule "cheesebrain"]
+	path = cheesebrain
+	url = https://github.com/pomagrenate/cheesebrain.git
