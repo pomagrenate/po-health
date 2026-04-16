@@ -3,13 +3,24 @@
 import React, { useState, useEffect } from 'react';
 import { api, DrugSummary, SearchRequest } from '@/lib/api';
 import { DrugCard } from '@/components/search/DrugCard';
-import { Search, Loader2, Filter, Download } from 'lucide-react';
+import { Search, Loader2, Filter, Download, X } from 'lucide-react';
 
 export default function SearchPage() {
     const [query, setQuery] = useState('');
     const [results, setResults] = useState<DrugSummary[]>([]);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
+
+    // Filters state
+    const [showFilters, setShowFilters] = useState(false);
+    const [filterOptions, setFilterOptions] = useState<{ dose_forms: string[]; statuses: string[]; routes: string[] } | null>(null);
+    const [selectedStatus, setSelectedStatus] = useState<string>('');
+    const [selectedDoseForm, setSelectedDoseForm] = useState<string>('');
+    const [selectedRoute, setSelectedRoute] = useState<string>('');
+
+    useEffect(() => {
+        api.filters().then(setFilterOptions).catch(console.error);
+    }, []);
 
     const handleSearch = async (e?: React.FormEvent) => {
         if (e) e.preventDefault();
@@ -20,6 +31,11 @@ export default function SearchPage() {
         try {
             const drugs = await api.search({
                 query,
+                filters: {
+                    status: selectedStatus || undefined,
+                    dose_form: selectedDoseForm || undefined,
+                    route: selectedRoute || undefined,
+                },
                 top_k: 12,
             });
             setResults(drugs);
@@ -30,8 +46,37 @@ export default function SearchPage() {
         }
     };
 
+    // Trigger search automatically when filters change
+    useEffect(() => {
+        if (query.trim()) {
+            handleSearch();
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [selectedStatus, selectedDoseForm, selectedRoute]);
+
+    const handleExport = () => {
+        if (!results.length) return;
+        const headers = ["ID", "Name", "Dose Form", "Status", "Ingredients", "Indications"];
+        const rows = results.map(d => [
+            d.id,
+            `"${d.name.replace(/"/g, '""')}"`,
+            `"${d.dose_form.replace(/"/g, '""')}"`,
+            `"${d.status.replace(/"/g, '""')}"`,
+            `"${d.ingredients.join(', ').replace(/"/g, '""')}"`,
+            `"${(d.indications || []).join(', ').replace(/"/g, '""')}"`
+        ]);
+        const csvContent = "data:text/csv;charset=utf-8," + [headers, ...rows].map(e => e.join(",")).join("\n");
+        const encodedUri = encodeURI(csvContent);
+        const link = document.createElement("a");
+        link.setAttribute("href", encodedUri);
+        link.setAttribute("download", `drug_search_${query.replace(/\\s+/g, '_')}.csv`);
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+    };
+
     return (
-        <div className="max-w-7xl mx-auto space-y-6 animate-fade-in">
+        <div className="max-w-7xl mx-auto space-y-6 animate-fade-in relative">
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                 <div>
                     <h1 className="text-3xl font-bold tracking-tight">Drug Retrieval</h1>
@@ -41,14 +86,72 @@ export default function SearchPage() {
                 </div>
 
                 <div className="flex items-center gap-2">
-                    <button className="flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-lg border border-border bg-card hover:bg-secondary transition-colors">
+                    <button
+                        onClick={() => setShowFilters(!showFilters)}
+                        className={`flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-lg border transition-colors ${showFilters ? 'bg-primary text-primary-foreground border-primary' : 'border-border bg-card hover:bg-secondary'}`}
+                    >
                         <Filter className="h-4 w-4" /> Filters
                     </button>
-                    <button className="flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-lg border border-border bg-card hover:bg-secondary transition-colors">
+                    <button
+                        onClick={handleExport}
+                        disabled={results.length === 0}
+                        className="flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-lg border border-border bg-card hover:bg-secondary transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
                         <Download className="h-4 w-4" /> Export Results
                     </button>
                 </div>
             </div>
+
+            {showFilters && filterOptions && (
+                <div className="p-4 bg-muted/50 border border-border rounded-xl flex flex-wrap gap-4 items-center animate-in fade-in slide-in-from-top-2">
+                    <div className="space-y-1">
+                        <label className="text-xs font-semibold text-muted-foreground uppercase">Status</label>
+                        <select
+                            value={selectedStatus}
+                            onChange={(e) => setSelectedStatus(e.target.value)}
+                            className="block w-full text-sm bg-card border border-border rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
+                        >
+                            <option value="">Any Status</option>
+                            {filterOptions.statuses.map(s => <option key={s} value={s}>{s}</option>)}
+                        </select>
+                    </div>
+                    <div className="space-y-1">
+                        <label className="text-xs font-semibold text-muted-foreground uppercase">Dose Form</label>
+                        <select
+                            value={selectedDoseForm}
+                            onChange={(e) => setSelectedDoseForm(e.target.value)}
+                            className="block w-full text-sm bg-card border border-border rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
+                        >
+                            <option value="">Any Dose Form</option>
+                            {filterOptions.dose_forms.map(d => <option key={d} value={d}>{d}</option>)}
+                        </select>
+                    </div>
+                    <div className="space-y-1">
+                        <label className="text-xs font-semibold text-muted-foreground uppercase">Route</label>
+                        <select
+                            value={selectedRoute}
+                            onChange={(e) => setSelectedRoute(e.target.value)}
+                            className="block w-full text-sm bg-card border border-border rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-primary"
+                        >
+                            <option value="">Any Route</option>
+                            {filterOptions.routes.map(r => <option key={r} value={r}>{r}</option>)}
+                        </select>
+                    </div>
+
+                    {(selectedStatus || selectedDoseForm || selectedRoute) && (
+                        <button
+                            onClick={() => {
+                                setSelectedStatus('');
+                                setSelectedDoseForm('');
+                                setSelectedRoute('');
+                            }}
+                            className="ml-auto flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground mt-4"
+                        >
+                            <X className="w-4 h-4" /> Clear filters
+                        </button>
+                    )}
+                </div>
+            )}
 
             <form onSubmit={handleSearch} className="flex gap-2">
                 <div className="relative flex-1">

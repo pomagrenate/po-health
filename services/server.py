@@ -123,7 +123,8 @@ class IngestRequest(BaseModel):
 
 class ReasoningRequest(BaseModel):
     patient_id: str
-    focus_area: Optional[str] = "General Synthesis"
+    focus_area: Optional[str] = None
+    language: Optional[str] = "english"
 
 
 class ReasoningResponse(BaseModel):
@@ -183,7 +184,14 @@ class ImagingInsightRequest(BaseModel):
 class ImagingInsightResponse(BaseModel):
     impression: str
     key_findings: List[str]
-    recommendations: List[str]
+    critical_findings: bool
+    recommendations: str
+
+class ImagingInsightResponse(BaseModel):
+    impression: str
+    key_findings: List[str]
+    critical_findings: bool
+    recommendations: str
     critical_findings: bool
     timestamp: int
 
@@ -1530,19 +1538,6 @@ def search_guidelines(q: str, top_k: int = 5):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-class ReasoningRequest(BaseModel):
-    patient_id: str
-    focus_area: Optional[str] = None
-    language: Optional[str] = "english"
-
-class ReasoningResponse(BaseModel):
-    patient_id: str
-    summary: str
-    risks: List[str]
-    guidelines: List[dict]
-    suggested_plan: str
-    timestamp: int
-
 DiagnoseResponse = ReasoningResponse
 
 
@@ -1580,7 +1575,7 @@ Suggest DDx.
         ddx = data["choices"][0]["message"]["content"]
         return {"ddx": ddx}
 
-@app.post("/api/agent/diagnose", response_model=DiagnoseResponse)
+@app.post("/api/agent/reason", response_model=ReasoningResponse)
 async def reason_patient_case(req: ReasoningRequest):
     """
     Intelligent Clinical Assistant: Synthesizes vitals, meds, and guidelines using Local LLM.
@@ -1669,8 +1664,10 @@ Suggested Plan: <next steps>
     risks = [r.strip("- ") for r in risks_str.split("\n") if r.strip()]
 
     return ReasoningResponse(
+        patient_id=patient_id,
         summary=summary,
         risks=risks,
+        guidelines=guideline_hits,
         suggested_plan=plan,
         timestamp=int(time.time())
     )
@@ -1733,10 +1730,9 @@ async def clinical_safety_audit(req: SafetyAuditRequest):
     lang = req.language if req.language else "english"
     
     # Context
-    vitals_raw = pomaidb.ts_get_latest(_STATE["db"], PATIENT_VITALS_MEMBRANE, patient_id)
-    latest_vitals = {v["vital"]: v["value"] for v in vitals_raw} if vitals_raw else {}
-    meds_raw = pomaidb.kv_get(_STATE["db"], PATIENT_MEDS_MEMBRANE, f"meds:{patient_id}")
-    meds = json.loads(meds_raw) if meds_raw else []
+    vitals = get_vitals(patient_id)
+    latest_vitals = {v["vital"]: v["value"] for v in vitals[-10:]} if vitals else {}
+    meds = get_medications(patient_id)
 
     prompt = f"""<|im_start|>system
 You are a Clinical Safety Auditor. Analyze the patient case and the current SOAP draft for risks, errors, or medication conflicts.

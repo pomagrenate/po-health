@@ -27,7 +27,7 @@ import {
     ShieldCheck,
     CheckCircle2,
     AlertCircle,
-    Image as ImageIcon,
+    ImageIcon,
     FileSearch,
     Stethoscope,
     FlaskConical,
@@ -253,8 +253,9 @@ export function AssistantSidebar({ patientId, onApplyPlan }: Props) {
                         </div>
                     </div>
 
-                    {/* Scrollable Content Area */}
-                    <div className="flex-1 overflow-y-auto p-6 space-y-8 no-scrollbar">
+                    {/* Scrollable Content AREA */}
+                    <div className="flex-1 overflow-y-auto no-scrollbar p-6 pt-2 space-y-10 pb-32">
+
                         {activeTab === 'assistant' && (
                             <div className="space-y-8 animate-in fade-in slide-in-from-bottom-2 duration-300">
                                 {/* 1. Active Guard Alerts */}
