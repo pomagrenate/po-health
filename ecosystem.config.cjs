@@ -12,8 +12,8 @@ module.exports = {
     },
     {
       name: "po-health-frontend",
-      script: "node_modules/.bin/next",
-      args: "start -p 9000",
+      script: "npm",
+      args: "run start -- -p 9000",
       cwd: "/home/vinhle/po-health",
       env: {
         NODE_ENV: "production"
