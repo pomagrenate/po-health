@@ -2,7 +2,7 @@ module.exports = {
   apps: [
     {
       name: "po-health-backend",
-      script: "services/server.py",
+      script: "/home/vinhle/po-health/services/server.py",
       cwd: "/home/vinhle/po-health",
       interpreter: "python3",
       env: {
@@ -12,10 +12,10 @@ module.exports = {
     },
     {
       name: "po-health-frontend",
-      script: "node_modules/next/dist/bin/next",
-      args: "start -p 9000",
-      interpreter: "node",
+      script: "npm",
+      args: "run start -- -p 9000",
       cwd: "/home/vinhle/po-health",
+      interpreter: "none",
       env: {
         NODE_ENV: "production"
       }
