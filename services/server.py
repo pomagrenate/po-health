@@ -1047,7 +1047,7 @@ Output format:
     try:
         async with httpx.AsyncClient() as client:
             resp = await client.post(
-                "http://localhost:8081/v1/chat/completions",
+                "http://localhost:5002/v1/chat/completions",
                 json={
                     "model": "reasoning_q4.gguf",
                     "messages": [{"role": "user", "content": prompt}],
@@ -1562,7 +1562,7 @@ Suggest DDx.
 """
     async with httpx.AsyncClient() as client:
         resp = await client.post(
-            "http://localhost:8081/v1/chat/completions",
+            "http://localhost:5002/v1/chat/completions",
             json={
                 "model": "reasoning_q4.gguf",
                 "messages": [{"role": "user", "content": prompt}],
@@ -1635,7 +1635,7 @@ Suggested Plan: <next steps>
     try:
         async with httpx.AsyncClient() as client:
             resp = await client.post(
-                "http://localhost:8081/v1/chat/completions",
+                "http://localhost:5002/v1/chat/completions",
                 json={
                     "model": "reasoning_q4.gguf",
                     "messages": [
@@ -1697,7 +1697,7 @@ Plan: <bulleted list>
     try:
         async with httpx.AsyncClient() as client:
             resp = await client.post(
-                "http://localhost:8081/v1/chat/completions",
+                "http://localhost:5002/v1/chat/completions",
                 json={
                     "model": "reasoning_q4.gguf",
                     "messages": [{"role": "user", "content": prompt}],
@@ -1755,7 +1755,7 @@ Mitigations: <bulleted list>
     try:
         async with httpx.AsyncClient() as client:
             resp = await client.post(
-                "http://localhost:8081/v1/chat/completions",
+                "http://localhost:5002/v1/chat/completions",
                 json={
                     "model": "reasoning_q4.gguf",
                     "messages": [{"role": "user", "content": prompt}],
@@ -1814,7 +1814,7 @@ Follow-up: <narrative>
     try:
         async with httpx.AsyncClient() as client:
             resp = await client.post(
-                "http://localhost:8081/v1/chat/completions",
+                "http://localhost:5002/v1/chat/completions",
                 json={
                     "model": "reasoning_q4.gguf",
                     "messages": [{"role": "user", "content": prompt}],
@@ -1870,7 +1870,7 @@ Recommendations: <bulleted list>
     try:
         async with httpx.AsyncClient() as client:
             resp = await client.post(
-                "http://localhost:8081/v1/chat/completions",
+                "http://localhost:5002/v1/chat/completions",
                 json={
                     "model": "reasoning_q4.gguf",
                     "messages": [{"role": "user", "content": prompt}],

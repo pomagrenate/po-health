@@ -137,7 +137,7 @@ class ActiveGuard:
             
             with httpx.Client() as client:
                 resp = client.post(
-                    "http://localhost:8081/v1/chat/completions",
+                    "http://localhost:5002/v1/chat/completions",
                     json={
                         "model": "reasoning_q4.gguf",
                         "messages": [{"role": "user", "content": prompt}],
