@@ -16,7 +16,7 @@ module.exports = {
       args: "start",
       cwd: "/home/vinhle/po-health",
       env: {
-        PORT: "3000"
+        PORT: "9000"
       }
     }
   ]
