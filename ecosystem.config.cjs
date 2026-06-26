@@ -4,7 +4,7 @@ module.exports = {
       name: "po-health-backend",
       script: "services/server.py",
       cwd: "/home/vinhle/po-health",
-      interpreter: "/home/vinhle/po-health/.venv/bin/python",
+      interpreter: "python3",
       env: {
         DB_PATH: "/home/vinhle/po-health/pomaidb",
         DOCKING_DB_PATH: "/home/vinhle/po-health/cheesepath",
