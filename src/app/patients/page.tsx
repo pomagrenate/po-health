@@ -22,7 +22,7 @@ export default function PatientsPage() {
 
     useEffect(() => {
         if (selectedId) {
-            api.getVitals(selectedId).then(setVitals);
+            api.getPatientVitals(selectedId).then(setVitals);
         }
     }, [selectedId]);
 
@@ -30,7 +30,7 @@ export default function PatientsPage() {
         if (!selectedId) return;
         try {
             await api.logVitals(selectedId, { ...logValue, ts: Math.floor(Date.now() / 1000) });
-            const updated = await api.getVitals(selectedId);
+            const updated = await api.getPatientVitals(selectedId);
             setVitals(updated);
         } catch (e) {
             alert('Failed to log vitals');
