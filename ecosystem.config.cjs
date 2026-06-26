@@ -12,11 +12,11 @@ module.exports = {
     },
     {
       name: "po-health-frontend",
-      script: "npm",
-      args: "start",
+      script: "node_modules/.bin/next",
+      args: "start -p 9000",
       cwd: "/home/vinhle/po-health",
       env: {
-        PORT: "9000"
+        NODE_ENV: "production"
       }
     }
   ]
